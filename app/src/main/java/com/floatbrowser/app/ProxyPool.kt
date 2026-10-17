@@ -14,9 +14,12 @@ import java.util.concurrent.TimeUnit
 
 data class ProxyEntry(
     val host: String, val port: Int, val type: String = "http",
-    val user: String? = null, val pass: String? = null, val pingMs: Long = Long.MAX_VALUE
+    val user: String? = null, val pass: String? = null,
+    val pingMs: Long = Long.MAX_VALUE, val exitIp: String? = null
 ) {
     fun key() = "$type://$host:$port"
+    /** Identidade real do proxy: o IP de saída medido (ou o host, se ainda não medido). */
+    fun ipKey() = exitIp ?: host
     fun toJavaProxy() = Proxy(
         if (type.startsWith("socks")) Proxy.Type.SOCKS else Proxy.Type.HTTP,
         InetSocketAddress.createUnresolved(host, port)
@@ -37,6 +40,7 @@ class ProxyPool(
             "https://raw.githubusercontent.com/proxifly/free-proxy-list/main/proxies/protocols/http/data.txt"
         )
         private val LINE = Regex("""^(?:(\w+)://)?(?:([^:@]+):([^@]+)@)?([\w.\-]+):(\d{2,5})$""")
+        private val IP = Regex("""^[0-9a-fA-F:.]{7,45}$""")
     }
 
     private val http = OkHttpClient.Builder()
@@ -65,13 +69,15 @@ class ProxyPool(
                 .awaitAll().flatten()
         }
         val candidates = raw.mapNotNull(::parse).distinctBy { it.key() }
-            .filter { !isQuarantined(it) }.shuffled().take(maxCandidates)
+            .filter { !isQuarantined(it) }.shuffled().take(if (Prefs.isEco()) 150 else maxCandidates)
         withContext(Dispatchers.Main) { onProgress("Testando ${candidates.size} proxys…") }
 
         val sem = Semaphore(parallel)
         val ok = coroutineScope {
             candidates.map { p -> async { sem.withPermit { test(p) } } }.awaitAll()
-        }.filterNotNull().sortedBy { it.pingMs }.take(maxPool)
+        }.filterNotNull().sortedBy { it.pingMs }
+            .distinctBy { it.ipKey() }          // nunca dois proxys com o mesmo IP de saída
+            .take(maxPool)
 
         healthy.clear(); healthy.addAll(ok)
         withContext(Dispatchers.Main) { onProgress("${ok.size} proxys funcionando") }
@@ -83,44 +89,80 @@ class ProxyPool(
             if (r.isSuccessful) r.body?.string()?.lineSequence()?.toList().orEmpty() else emptyList()
         }
 
-    suspend fun test(p: ProxyEntry): ProxyEntry? = withTimeoutOrNull(timeoutMs + 500) {
-        runCatching {
-            val client = http.newBuilder().proxy(p.toJavaProxy()).apply {
-                if (p.user != null) proxyAuthenticator { _, resp ->
-                    resp.request.newBuilder()
-                        .header("Proxy-Authorization", Credentials.basic(p.user, p.pass ?: "")).build()
+    /** Faz uma requisição HTTPS real pelo proxy e mede o IP de saída. Resposta estranha = descartado. */
+    suspend fun test(p: ProxyEntry, ms: Long = timeoutMs): ProxyEntry? = withContext(Dispatchers.IO) {
+        withTimeoutOrNull(ms + 1000) {
+            runCatching {
+                val client = http.newBuilder().proxy(p.toJavaProxy())
+                    .connectTimeout(ms, TimeUnit.MILLISECONDS)
+                    .readTimeout(ms, TimeUnit.MILLISECONDS)
+                    .callTimeout(ms + 500, TimeUnit.MILLISECONDS)
+                    .apply {
+                        if (p.user != null) proxyAuthenticator { _, resp ->
+                            resp.request.newBuilder()
+                                .header("Proxy-Authorization", Credentials.basic(p.user, p.pass ?: "")).build()
+                        }
+                    }.build()
+                val t = System.currentTimeMillis()
+                client.newCall(Request.Builder().url("https://api.ipify.org").build()).execute().use { r ->
+                    val ip = if (r.isSuccessful) r.body?.string()?.trim() else null
+                    if (ip != null && IP.matches(ip))
+                        p.copy(pingMs = System.currentTimeMillis() - t, exitIp = ip) else null
                 }
-            }.build()
-            val t = System.currentTimeMillis()
-            client.newCall(Request.Builder().url("https://api.ipify.org").build()).execute().use {
-                if (it.isSuccessful) p.copy(pingMs = System.currentTimeMillis() - t) else null
-            }
-        }.getOrNull()
+            }.getOrNull()
+        }
     }
 
     private fun isQuarantined(p: ProxyEntry) =
         (quarantined[p.key()] ?: 0L) > System.currentTimeMillis()
 
+    private fun quarantine(p: ProxyEntry, minutes: Long) {
+        quarantined[p.key()] = System.currentTimeMillis() + minutes * 60_000
+        healthy.removeAll { it.key() == p.key() }
+    }
+
+    private fun takenExcept(windowId: String) =
+        inUse.filterKeys { it != windowId }.values.map { it.ipKey() }.toSet()
+
+    /** Escolha rápida (sem teste) para abrir a janela. */
     @Synchronized
     fun assignTo(windowId: String): ProxyEntry? {
         inUse.remove(windowId)
-        val taken = inUse.values.map { it.key() }.toSet()
-        val p = (manual + healthy).firstOrNull { it.key() !in taken && !isQuarantined(it) }
+        val taken = takenExcept(windowId)
+        val p = (manual + healthy).firstOrNull { it.ipKey() !in taken && !isQuarantined(it) }
         if (p != null) inUse[windowId] = p
         return p
     }
 
-    @Synchronized fun release(windowId: String) { inUse.remove(windowId) }
-
     @Synchronized
-    fun markBad(windowId: String, minutes: Long = 10): ProxyEntry? {
-        inUse[windowId]?.let {
-            quarantined[it.key()] = System.currentTimeMillis() + minutes * 60_000
-            healthy.removeAll { h -> h.key() == it.key() }
-        }
-        return assignTo(windowId)
+    private fun claim(windowId: String, p: ProxyEntry): Boolean {
+        if (inUse.filterKeys { it != windowId }.values.any { it.ipKey() == p.ipKey() }) return false
+        inUse[windowId] = p
+        return true
     }
 
+    /** Descarta o proxy atual da janela (quarentena). */
+    @Synchronized
+    fun burn(windowId: String, minutes: Long = 10) {
+        inUse.remove(windowId)?.let { quarantine(it, minutes) }
+    }
+
+    /** Troca rápida: testa até 6 candidatos em paralelo e entrega o mais rápido que respondeu. */
+    suspend fun nextVerified(windowId: String): ProxyEntry? = withContext(Dispatchers.IO) {
+        repeat(2) {
+            val taken = takenExcept(windowId)
+            val cands = (manual + healthy)
+                .filter { it.ipKey() !in taken && !isQuarantined(it) }.take(if (Prefs.isEco()) 3 else 6)
+            if (cands.isEmpty()) return@withContext null
+            val res = coroutineScope { cands.map { c -> async { c to test(c, 2500) } }.awaitAll() }
+            res.filter { it.second == null }.forEach { quarantine(it.first, 10) }
+            for (b in res.mapNotNull { it.second }.sortedBy { it.pingMs })
+                if (claim(windowId, b)) return@withContext b
+        }
+        null
+    }
+
+    @Synchronized fun release(windowId: String) { inUse.remove(windowId) }
     fun current(windowId: String) = inUse[windowId]
     fun needsRefresh() = healthy.size < 5
 }

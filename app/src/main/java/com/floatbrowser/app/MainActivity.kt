@@ -2,7 +2,14 @@ package com.floatbrowser.app
 
 import android.Manifest
 import android.app.Activity
+import android.app.ActivityManager
 import android.app.AlertDialog
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
@@ -19,7 +26,7 @@ import kotlinx.coroutines.*
 import org.mozilla.geckoview.StorageController
 
 class MainActivity : Activity() {
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main + CrashLog.handler)
     private lateinit var status: TextView
 
     override fun onCreate(b: Bundle?) {
@@ -56,6 +63,21 @@ class MainActivity : Activity() {
             Prefs.keepAwake = !Prefs.keepAwake; awakeText(); FloatService.instance?.updateLocks()
         }
         col.addView(awake)
+        val dataBtn = Button(this)
+        fun dataText() {
+            dataBtn.text = "Uso de dados: " + listOf("NORMAL", "ECONÔMICO", "AUTOMÁTICO")[Prefs.dataMode]
+        }
+        dataText()
+        dataBtn.setOnClickListener {
+            val items = arrayOf(
+                "Normal: testes a cada 45 s, lista a cada 10 min",
+                "Econômico: testes a cada 3 min, lista a cada 30 min e só se faltar proxy",
+                "Automático: econômico no 4G/rede limitada, normal no Wi-Fi")
+            AlertDialog.Builder(this).setTitle("Uso de dados")
+                .setSingleChoiceItems(items, Prefs.dataMode) { dlg, i -> Prefs.dataMode = i; dataText(); dlg.dismiss() }
+                .show()
+        }
+        col.addView(dataBtn)
         btn("Atualizar proxys agora") { refreshProxies() }
         btn("Proxys manuais") {
             editDialog("Um por linha: ip:porta ou usuario:senha@ip:porta", Prefs.manualText) {
@@ -83,6 +105,7 @@ class MainActivity : Activity() {
         btn("Não otimizar bateria (segundo plano)") {
             startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:$packageName")))
         }
+        btn("Diagnóstico: por que o app fechou?") { showDiag() }
         btn("Fechar todas as janelas") {
             startForegroundService(Intent(this, FloatService::class.java).setAction(FloatService.ACTION_STOP))
         }
@@ -118,6 +141,32 @@ class MainActivity : Activity() {
                 status.text = "Scripts atualizados (valem nas próximas páginas)"
             }.show()
         }.show()
+    }
+
+    private fun showDiag() {
+        val sb = StringBuilder()
+        if (Build.VERSION.SDK_INT >= 30) {
+            val list = getSystemService(ActivityManager::class.java)
+                .getHistoricalProcessExitReasons(packageName, 0, 5)
+            if (list.isEmpty()) sb.append("Nenhum encerramento registrado.\n\n")
+            val fmt = SimpleDateFormat("dd/MM HH:mm:ss", Locale.getDefault())
+            list.forEach {
+                sb.append(fmt.format(Date(it.timestamp))).append(" · ")
+                    .append(CrashLog.reasonName(it.reason)).append("\n")
+                if (!it.description.isNullOrEmpty()) sb.append(it.description).append("\n")
+                sb.append("\n")
+            }
+        } else sb.append("Histórico indisponível (precisa de Android 11 ou superior).\n\n")
+        val crash = CrashLog.read()
+        sb.append(if (crash.isEmpty()) "Nenhum erro interno registrado." else "Último erro interno:\n$crash")
+        val text = sb.toString()
+        AlertDialog.Builder(this).setTitle("Diagnóstico").setMessage(text)
+            .setPositiveButton("OK", null)
+            .setNeutralButton("Copiar") { _, _ ->
+                (getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager)
+                    .setPrimaryClip(ClipData.newPlainText("diagnostico", text))
+                status.text = "Diagnóstico copiado"
+            }.show()
     }
 
     override fun onActivityResult(r: Int, c: Int, d: Intent?) {

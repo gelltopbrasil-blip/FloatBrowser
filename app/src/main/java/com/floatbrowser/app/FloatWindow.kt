@@ -4,6 +4,7 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Color
 import android.graphics.PixelFormat
+import android.graphics.Typeface
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
@@ -20,6 +21,8 @@ import android.widget.LinearLayout
 import android.widget.SeekBar
 import android.widget.Switch
 import android.widget.TextView
+import android.widget.Toast
+import kotlinx.coroutines.launch
 import org.mozilla.geckoview.GeckoResult
 import org.mozilla.geckoview.GeckoSession
 import org.mozilla.geckoview.GeckoSessionSettings
@@ -28,8 +31,8 @@ import org.mozilla.geckoview.WebResponse
 
 /**
  * Cada janela = 2 janelas de sistema:
- *  - barra (sempre opaca e tocável: mover, transparência, chavinha, fechar)
- *  - conteúdo (navegador; recebe transparência e pode ficar "fantasma" com a chavinha)
+ *  - barra (sempre opaca e tocável)
+ *  - conteúdo (navegador; transparência; modo "fantasma" com a chavinha; minimizar)
  */
 @SuppressLint("ClickableViewAccessibility")
 class FloatWindow(
@@ -37,7 +40,9 @@ class FloatWindow(
     private val wm: WindowManager,
     val id: String,
     slot: Int,
-    private val onClosed: (FloatWindow) -> Unit
+    private val onClosed: (FloatWindow) -> Unit,
+    private val onDecision: (FloatWindow, Boolean) -> Unit,
+    private val initialUrl: String? = null
 ) {
     private val ctx = ContextThemeWrapper(svc, android.R.style.Theme_Material_Light)
     private val d = svc.resources.displayMetrics.density
@@ -49,11 +54,18 @@ class FloatWindow(
     private var started = false
     private var mappedOk = false
     private var lastFail = 0L
+    private var failing = false
+    private var badCount = 0
+    private var asking = false
+    private var dismissed = false
     private var locking = false
     private var locked = false
     private var minimized = false
     private var contentAlpha = 1f
     private var attached = false
+    private var curUrl: String? = initialUrl
+    private var recoverCount = 0
+    private var recoverSince = 0L
 
     private val barH = px(40)
     private var posX = px(16 + slot * 24)
@@ -89,6 +101,7 @@ class FloatWindow(
     private val lockSwitch = Switch(ctx)
     private val barView = LinearLayout(ctx)
     private val content = LinearLayout(ctx)
+    private val banner = LinearLayout(ctx)
 
     private fun updateLayout() {
         val untouchable = WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
@@ -105,11 +118,10 @@ class FloatWindow(
             else -> contentAlpha
         }
         if (attached) {
-            wm.updateViewLayout(contentWindowView(), contentP)
+            wm.updateViewLayout(content, contentP)
             wm.updateViewLayout(barView, barP)
         }
     }
-    private fun contentWindowView() = content
 
     init {
         content.orientation = LinearLayout.VERTICAL
@@ -121,9 +133,11 @@ class FloatWindow(
             setBackgroundColor(0xFF263238.toInt())
             setPadding(px(8), px(2), px(8), px(2))
         }
+        // toque = informação; TOQUE LONGO = alternar IP real (evita toque acidental)
         modeIcon.apply {
             textSize = 16f; setPadding(px(4), px(6), px(8), px(6))
-            setOnClickListener { toggleDirect() }
+            setOnClickListener { showInfo() }
+            setOnLongClickListener { toggleDirect(); true }
         }
         label.apply {
             setTextColor(Color.WHITE); textSize = 11f; maxLines = 1
@@ -134,18 +148,21 @@ class FloatWindow(
             layoutParams = LinearLayout.LayoutParams(px(56), LinearLayout.LayoutParams.WRAP_CONTENT)
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                 override fun onProgressChanged(s: SeekBar?, p: Int, u: Boolean) {
-                    contentAlpha = 0.15f + p / 100f   // de 15% a 100%; a barra nunca some
+                    contentAlpha = 0.15f + p / 100f
                     updateLayout()
                 }
                 override fun onStartTrackingTouch(s: SeekBar?) {}
                 override fun onStopTrackingTouch(s: SeekBar?) {}
             })
         }
-        // chavinha: ativada = navegador vira "fantasma" (toque passa para o app de baixo)
         lockSwitch.apply {
             scaleX = 0.7f; scaleY = 0.7f
             layoutParams = LinearLayout.LayoutParams(px(44), LinearLayout.LayoutParams.WRAP_CONTENT)
             setOnCheckedChangeListener { _, c -> if (!locking) setLocked(c) }
+        }
+        val minBtn = TextView(ctx).apply {
+            text = "—"; textSize = 18f; setTextColor(Color.WHITE)
+            setPadding(px(8), px(6), px(8), px(6)); setOnClickListener { setMinimized(true) }
         }
         val close = TextView(ctx).apply {
             text = "✕"; textSize = 18f; setTextColor(Color.WHITE)
@@ -153,10 +170,6 @@ class FloatWindow(
         }
         barView.addView(modeIcon)
         barView.addView(label, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-        val minBtn = TextView(ctx).apply {
-            text = "—"; textSize = 18f; setTextColor(Color.WHITE)
-            setPadding(px(8), px(6), px(8), px(6)); setOnClickListener { setMinimized(true) }
-        }
         barView.addView(alphaBar); barView.addView(lockSwitch); barView.addView(minBtn); barView.addView(close)
 
         var sx = 0f; var sy = 0f; var ox = 0; var oy = 0
@@ -170,6 +183,26 @@ class FloatWindow(
                 else -> false
             }
         }
+
+        // aviso: sem proxy válido -> perguntar se usa o IP real
+        banner.apply {
+            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+            setBackgroundColor(0xFFB71C1C.toInt()); visibility = View.GONE
+            setPadding(px(8), px(6), px(8), px(6))
+        }
+        val msg = TextView(ctx).apply {
+            text = "Sem proxy válido. Usar seu IP real?"; setTextColor(Color.WHITE); textSize = 11f
+        }
+        val yes = TextView(ctx).apply {
+            text = "USAR IP REAL"; setTextColor(Color.WHITE); textSize = 11f; setTypeface(null, Typeface.BOLD)
+            setPadding(px(8), px(6), px(8), px(6)); setOnClickListener { useRealIp() }
+        }
+        val no = TextView(ctx).apply {
+            text = "AGUARDAR"; setTextColor(0xFFFFCDD2.toInt()); textSize = 11f
+            setPadding(px(8), px(6), px(4), px(6)); setOnClickListener { dismissed = true; hideAsk() }
+        }
+        banner.addView(msg, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        banner.addView(yes); banner.addView(no)
 
         val url = EditText(ctx).apply {
             setSingleLine(); hint = "Site ou pesquisa (digite meuip para testar)"; textSize = 13f
@@ -196,6 +229,7 @@ class FloatWindow(
             }
         }
 
+        content.addView(banner)
         content.addView(url)
         content.addView(gv, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
         content.addView(handle, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
@@ -204,6 +238,9 @@ class FloatWindow(
             override fun onExternalResponse(session: GeckoSession, response: WebResponse) {
                 Downloader.save(svc, response)
             }
+            // processo do navegador morreu (pouca memória, tela desligada...): reabre sozinho
+            override fun onCrash(session: GeckoSession) { recover() }
+            override fun onKill(session: GeckoSession) { recover() }
         }
         session.promptDelegate = object : GeckoSession.PromptDelegate {
             override fun onFilePrompt(
@@ -224,11 +261,11 @@ class FloatWindow(
     fun show() {
         updateLayout()
         wm.addView(content, contentP)
-        wm.addView(barView, barP)   // a barra por último = fica por cima
+        wm.addView(barView, barP)
         attached = true
-        session.setActive(true) // evita que o Gecko "adormeça" a página
+        session.setActive(true)
         ProxyBridge.register(id,
-            onMapped = { ok -> mappedOk = ok; refresh(); startPage() },
+            onMapped = { ok -> mappedOk = ok; startPage(); refresh() },
             onFail = { handleFail() })
         applyConfig()
         session.loadUri("http://floatbrowser.invalid/hello?w=$id")
@@ -238,7 +275,7 @@ class FloatWindow(
     private fun startPage() {
         if (started) return
         started = true
-        load("https://www.google.com")
+        load(curUrl ?: "https://www.google.com")
     }
 
     fun load(input: String) {
@@ -249,6 +286,7 @@ class FloatWindow(
             t.contains(".") && !t.contains(" ") -> "https://$t"
             else -> "https://www.google.com/search?q=" + Uri.encode(t)
         }
+        curUrl = u
         session.loadUri(u)
     }
 
@@ -264,10 +302,36 @@ class FloatWindow(
         val p = pool.current(id)
         val warn = if (started && !mappedOk) "⚠ " else ""
         when {
-            direct -> { modeIcon.text = "🌐"; label.text = "$n · direto (sem proxy)" }
-            p != null -> { modeIcon.text = "🔒"; label.text = "$warn$n · ${p.host}:${p.port}" }
-            else -> { modeIcon.text = "⛔"; label.text = "$n · sem proxy (bloqueado)" }
+            direct -> { modeIcon.text = "🌐"; label.text = "$n · IP real (direto)"; hideAsk() }
+            p != null -> {
+                modeIcon.text = "🔒"; label.text = "$warn$n · ${p.exitIp ?: p.host}"
+                dismissed = false; hideAsk()
+            }
+            else -> {
+                modeIcon.text = "⛔"; label.text = "$n · sem proxy (bloqueado)"
+                if (started && !dismissed) showAsk()
+            }
         }
+    }
+
+    private fun showInfo() {
+        val p = pool.current(id)
+        val t = when {
+            direct -> "IP real (direto). Segure o ícone para voltar ao proxy."
+            p != null -> "Proxy ${p.host}:${p.port} · saída ${p.exitIp ?: "?"}. Segure o ícone para usar IP real."
+            else -> "Sem proxy válido. Segure o ícone para usar IP real."
+        }
+        Toast.makeText(svc, t, Toast.LENGTH_LONG).show()
+    }
+
+    private fun showAsk() {
+        if (asking) return
+        asking = true; banner.visibility = View.VISIBLE; onDecision(this, true)
+    }
+
+    private fun hideAsk() {
+        if (!asking) return
+        asking = false; banner.visibility = View.GONE; onDecision(this, false)
     }
 
     private fun toggleDirect() {
@@ -277,13 +341,47 @@ class FloatWindow(
         session.reload()
     }
 
+    /** Resposta ao aviso "Sem proxy válido": liberar o IP real nesta janela. */
+    fun useRealIp() {
+        direct = true; pool.release(id); hideAsk()
+        applyConfig(); session.reload()
+    }
+
+    /** Troca rápida: descarta o proxy ruim, testa candidatos na hora e só então aplica. */
     private fun handleFail() {
         val now = System.currentTimeMillis()
-        if (direct || now - lastFail < 6000) return
-        lastFail = now
-        pool.markBad(id)
-        applyConfig()
+        if (direct || failing || now - lastFail < 4000) return
+        lastFail = now; failing = true
+        label.text = "${id.uppercase()} · trocando proxy…"
+        AppState.scope.launch {
+            pool.burn(id)
+            val p = pool.nextVerified(id)
+            failing = false
+            applyConfig()
+            if (p != null) session.reload()
+            else if (pool.needsRefresh()) {
+                pool.refresh {}
+                onPoolRefreshed()
+            }
+        }
+    }
+
+    /** Teste periódico (serviço): detecta proxy morto mesmo com a janela minimizada. */
+    fun checkHealth() {
+        if (direct || failing) return
+        val p = pool.current(id) ?: return
+        AppState.scope.launch {
+            if (pool.test(p, 3000) == null) {
+                badCount++
+                if (badCount >= 2) { badCount = 0; handleFail() }
+            } else badCount = 0
+        }
+    }
+
+    /** Rede caiu e voltou (4G/Wi-Fi): recarrega e revalida. */
+    fun onNetworkBack() {
         session.reload()
+        checkHealth()
     }
 
     fun onPoolRefreshed() {
@@ -293,14 +391,13 @@ class FloatWindow(
         }
     }
 
-    // ---------- chavinha de bloqueio ----------
+    // ---------- chavinha / minimizar ----------
     private fun setLocked(on: Boolean) {
         locked = on
         updateLayout()
         if (lockSwitch.isChecked != on) { locking = true; lockSwitch.isChecked = on; locking = false }
     }
 
-    /** Minimizar: some da tela por completo, mas a página continua ativa e online. */
     fun setMinimized(m: Boolean) {
         minimized = m
         barView.visibility = if (m) View.GONE else View.VISIBLE
@@ -309,8 +406,23 @@ class FloatWindow(
 
     fun isMinimized() = minimized
 
+    fun currentUrl(): String? = curUrl
+
+    private fun recover() {
+        handler.post {
+            val now = System.currentTimeMillis()
+            if (now - recoverSince > 60_000) { recoverSince = now; recoverCount = 0 }
+            if (++recoverCount > 5) { label.text = "${id.uppercase()} · página caiu várias vezes"; return@post }
+            started = false; mappedOk = false
+            runCatching { session.open(GeckoHolder.get(svc)); session.setActive(true) }
+            session.loadUri("http://floatbrowser.invalid/hello?w=$id")
+            handler.postDelayed({ if (!started) { startPage(); refresh() } }, 2500)
+        }
+    }
+
     fun close() {
         handler.removeCallbacksAndMessages(null)
+        hideAsk()
         ProxyBridge.forget(id)
         pool.release(id)
         attached = false
