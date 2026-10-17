@@ -4,7 +4,6 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Color
 import android.graphics.PixelFormat
-import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
@@ -13,6 +12,7 @@ import android.text.TextUtils
 import android.view.ContextThemeWrapper
 import android.view.Gravity
 import android.view.MotionEvent
+import android.view.View
 import android.view.WindowManager
 import android.view.inputmethod.EditorInfo
 import android.widget.EditText
@@ -25,8 +25,12 @@ import org.mozilla.geckoview.GeckoSession
 import org.mozilla.geckoview.GeckoSessionSettings
 import org.mozilla.geckoview.GeckoView
 import org.mozilla.geckoview.WebResponse
-import kotlin.math.abs
 
+/**
+ * Cada janela = 2 janelas de sistema:
+ *  - barra (sempre opaca e tocável: mover, transparência, chavinha, fechar)
+ *  - conteúdo (navegador; recebe transparência e pode ficar "fantasma" com a chavinha)
+ */
 @SuppressLint("ClickableViewAccessibility")
 class FloatWindow(
     private val svc: Context,
@@ -46,17 +50,29 @@ class FloatWindow(
     private var mappedOk = false
     private var lastFail = 0L
     private var locking = false
-    private var bubble: TextView? = null
-    private var savedAlpha = 1f
+    private var locked = false
+    private var minimized = false
+    private var contentAlpha = 1f
+    private var attached = false
 
-    private val params = WindowManager.LayoutParams(
-        px(300), px(420),
-        WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+    private val barH = px(40)
+    private var posX = px(16 + slot * 24)
+    private var posY = px(72 + slot * 24)
+    private var winW = px(300)
+    private var winH = px(380)
+
+    private val barP = WindowManager.LayoutParams(
+        winW, barH, WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+        WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
+        PixelFormat.TRANSLUCENT
+    ).apply { gravity = Gravity.TOP or Gravity.START }
+
+    private val contentP = WindowManager.LayoutParams(
+        winW, winH, WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
         WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
         PixelFormat.TRANSLUCENT
     ).apply {
         gravity = Gravity.TOP or Gravity.START
-        x = px(16 + slot * 24); y = px(72 + slot * 24)
         softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_PAN
     }
 
@@ -71,17 +87,39 @@ class FloatWindow(
     private val modeIcon = TextView(ctx)
     private val label = TextView(ctx)
     private val lockSwitch = Switch(ctx)
-    private val root = LinearLayout(ctx)
+    private val barView = LinearLayout(ctx)
+    private val content = LinearLayout(ctx)
+
+    private fun updateLayout() {
+        val untouchable = WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+        val keep = WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
+        barP.x = posX; barP.y = posY; barP.width = winW
+        barP.flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or keep or
+            (if (minimized) WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE else 0)
+        contentP.x = posX; contentP.y = posY + barH; contentP.width = winW; contentP.height = winH
+        contentP.flags = if (locked || minimized) keep or untouchable else keep
+        contentP.alpha = when {
+            minimized -> 0f
+            locked -> minOf(contentAlpha, 0.8f) // Android 12+: toque só atravessa com opacidade <= 80%
+            else -> contentAlpha
+        }
+        if (attached) {
+            wm.updateViewLayout(contentWindowView(), contentP)
+            wm.updateViewLayout(barView, barP)
+        }
+    }
+    private fun contentWindowView() = content
 
     init {
-        root.orientation = LinearLayout.VERTICAL
-        root.setBackgroundColor(0xFF121212.toInt())
+        content.orientation = LinearLayout.VERTICAL
+        content.setBackgroundColor(0xFF121212.toInt())
 
-        val bar = LinearLayout(ctx).apply {
+        barView.apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             setBackgroundColor(0xFF263238.toInt())
-            setPadding(px(8), px(4), px(8), px(4))
+            setPadding(px(8), px(2), px(8), px(2))
         }
         modeIcon.apply {
             textSize = 16f; setPadding(px(4), px(6), px(8), px(6))
@@ -91,39 +129,43 @@ class FloatWindow(
             setTextColor(Color.WHITE); textSize = 11f; maxLines = 1
             ellipsize = TextUtils.TruncateAt.END
         }
-        val alpha = SeekBar(ctx).apply {
-            max = 70; progress = 70
+        val alphaBar = SeekBar(ctx).apply {
+            max = 85; progress = 85
             layoutParams = LinearLayout.LayoutParams(px(56), LinearLayout.LayoutParams.WRAP_CONTENT)
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                 override fun onProgressChanged(s: SeekBar?, p: Int, u: Boolean) {
-                    params.alpha = 0.3f + p / 100f
-                    if (root.isAttachedToWindow) wm.updateViewLayout(root, params)
+                    contentAlpha = 0.15f + p / 100f   // de 15% a 100%; a barra nunca some
+                    updateLayout()
                 }
                 override fun onStartTrackingTouch(s: SeekBar?) {}
                 override fun onStopTrackingTouch(s: SeekBar?) {}
             })
         }
-        // chavinha: ativada = janela fica "fantasma", o toque passa para o app/tela de baixo
+        // chavinha: ativada = navegador vira "fantasma" (toque passa para o app de baixo)
         lockSwitch.apply {
             scaleX = 0.7f; scaleY = 0.7f
             layoutParams = LinearLayout.LayoutParams(px(44), LinearLayout.LayoutParams.WRAP_CONTENT)
             setOnCheckedChangeListener { _, c -> if (!locking) setLocked(c) }
         }
         val close = TextView(ctx).apply {
-            text = "✕"; textSize = 16f; setTextColor(Color.WHITE)
-            setPadding(px(6), px(6), px(4), px(6)); setOnClickListener { close() }
+            text = "✕"; textSize = 18f; setTextColor(Color.WHITE)
+            setPadding(px(8), px(6), px(4), px(6)); setOnClickListener { close() }
         }
-        bar.addView(modeIcon)
-        bar.addView(label, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-        bar.addView(alpha); bar.addView(lockSwitch); bar.addView(close)
+        barView.addView(modeIcon)
+        barView.addView(label, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        val minBtn = TextView(ctx).apply {
+            text = "—"; textSize = 18f; setTextColor(Color.WHITE)
+            setPadding(px(8), px(6), px(8), px(6)); setOnClickListener { setMinimized(true) }
+        }
+        barView.addView(alphaBar); barView.addView(lockSwitch); barView.addView(minBtn); barView.addView(close)
 
         var sx = 0f; var sy = 0f; var ox = 0; var oy = 0
-        bar.setOnTouchListener { _, e ->
+        barView.setOnTouchListener { _, e ->
             when (e.action) {
-                MotionEvent.ACTION_DOWN -> { sx = e.rawX; sy = e.rawY; ox = params.x; oy = params.y; true }
+                MotionEvent.ACTION_DOWN -> { sx = e.rawX; sy = e.rawY; ox = posX; oy = posY; true }
                 MotionEvent.ACTION_MOVE -> {
-                    params.x = ox + (e.rawX - sx).toInt(); params.y = oy + (e.rawY - sy).toInt()
-                    wm.updateViewLayout(root, params); true
+                    posX = ox + (e.rawX - sx).toInt(); posY = oy + (e.rawY - sy).toInt()
+                    updateLayout(); true
                 }
                 else -> false
             }
@@ -144,28 +186,25 @@ class FloatWindow(
         var rx = 0f; var ry = 0f; var w0 = 0; var h0 = 0
         handle.setOnTouchListener { _, e ->
             when (e.action) {
-                MotionEvent.ACTION_DOWN -> { rx = e.rawX; ry = e.rawY; w0 = params.width; h0 = params.height; true }
+                MotionEvent.ACTION_DOWN -> { rx = e.rawX; ry = e.rawY; w0 = winW; h0 = winH; true }
                 MotionEvent.ACTION_MOVE -> {
-                    params.width = maxOf(px(200), w0 + (e.rawX - rx).toInt())
-                    params.height = maxOf(px(240), h0 + (e.rawY - ry).toInt())
-                    wm.updateViewLayout(root, params); true
+                    winW = maxOf(px(220), w0 + (e.rawX - rx).toInt())
+                    winH = maxOf(px(220), h0 + (e.rawY - ry).toInt())
+                    updateLayout(); true
                 }
                 else -> false
             }
         }
 
-        root.addView(bar)
-        root.addView(url)
-        root.addView(gv, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
-        root.addView(handle, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+        content.addView(url)
+        content.addView(gv, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
+        content.addView(handle, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
 
-        // downloads -> pasta Download
         session.contentDelegate = object : GeckoSession.ContentDelegate {
             override fun onExternalResponse(session: GeckoSession, response: WebResponse) {
                 Downloader.save(svc, response)
             }
         }
-        // upload -> seletor de arquivos do Android
         session.promptDelegate = object : GeckoSession.PromptDelegate {
             override fun onFilePrompt(
                 session: GeckoSession, prompt: GeckoSession.PromptDelegate.FilePrompt
@@ -183,12 +222,15 @@ class FloatWindow(
     }
 
     fun show() {
-        wm.addView(root, params)
+        updateLayout()
+        wm.addView(content, contentP)
+        wm.addView(barView, barP)   // a barra por último = fica por cima
+        attached = true
+        session.setActive(true) // evita que o Gecko "adormeça" a página
         ProxyBridge.register(id,
             onMapped = { ok -> mappedOk = ok; refresh(); startPage() },
             onFail = { handleFail() })
         applyConfig()
-        // handshake: a extensão descobre qual aba é esta janela
         session.loadUri("http://floatbrowser.invalid/hello?w=$id")
         handler.postDelayed({ if (!started) { startPage(); refresh() } }, 2500)
     }
@@ -244,7 +286,6 @@ class FloatWindow(
         session.reload()
     }
 
-    /** Chamado pelo serviço depois que a lista de proxys é atualizada. */
     fun onPoolRefreshed() {
         if (!direct && pool.current(id) == null) {
             applyConfig()
@@ -254,65 +295,29 @@ class FloatWindow(
 
     // ---------- chavinha de bloqueio ----------
     private fun setLocked(on: Boolean) {
-        val untouchable = WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
-        if (on) {
-            savedAlpha = params.alpha
-            params.alpha = minOf(params.alpha, 0.8f) // Android 12+ só deixa o toque passar se opacidade <= 0.8
-            params.flags = params.flags or untouchable
-            showBubble()
-        } else {
-            params.flags = params.flags and untouchable.inv()
-            params.alpha = savedAlpha
-            hideBubble()
-        }
-        wm.updateViewLayout(root, params)
+        locked = on
+        updateLayout()
         if (lockSwitch.isChecked != on) { locking = true; lockSwitch.isChecked = on; locking = false }
     }
 
-    private fun showBubble() {
-        val b = TextView(ctx).apply {
-            text = "🔓"; textSize = 20f; gravity = Gravity.CENTER
-            background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(0xDD263238.toInt()) }
-        }
-        val bp = WindowManager.LayoutParams(
-            px(44), px(44), WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE, PixelFormat.TRANSLUCENT
-        ).apply {
-            gravity = Gravity.TOP or Gravity.START
-            x = params.x + params.width - px(52); y = params.y + px(4)
-        }
-        var sx = 0f; var sy = 0f; var ox = 0; var oy = 0; var moved = false
-        b.setOnTouchListener { _, e ->
-            when (e.action) {
-                MotionEvent.ACTION_DOWN -> { sx = e.rawX; sy = e.rawY; ox = bp.x; oy = bp.y; moved = false; true }
-                MotionEvent.ACTION_MOVE -> {
-                    val dx = e.rawX - sx; val dy = e.rawY - sy
-                    if (abs(dx) > px(6) || abs(dy) > px(6)) moved = true
-                    bp.x = ox + dx.toInt(); bp.y = oy + dy.toInt()
-                    wm.updateViewLayout(b, bp); true
-                }
-                MotionEvent.ACTION_UP -> { if (!moved) setLocked(false); true }
-                else -> false
-            }
-        }
-        wm.addView(b, bp)
-        bubble = b
+    /** Minimizar: some da tela por completo, mas a página continua ativa e online. */
+    fun setMinimized(m: Boolean) {
+        minimized = m
+        barView.visibility = if (m) View.GONE else View.VISIBLE
+        updateLayout()
     }
 
-    private fun hideBubble() {
-        bubble?.let { runCatching { wm.removeView(it) } }
-        bubble = null
-    }
+    fun isMinimized() = minimized
 
     fun close() {
         handler.removeCallbacksAndMessages(null)
-        hideBubble()
         ProxyBridge.forget(id)
         pool.release(id)
+        attached = false
         runCatching { gv.releaseSession() }
         session.close()
-        runCatching { wm.removeView(root) }
+        runCatching { wm.removeView(barView) }
+        runCatching { wm.removeView(content) }
         onClosed(this)
     }
 }

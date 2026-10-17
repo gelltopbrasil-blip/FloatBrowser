@@ -43,6 +43,19 @@ class MainActivity : Activity() {
             if (!Settings.canDrawOverlays(this)) status.text = "Faça o passo 1 primeiro"
             else startForegroundService(Intent(this, FloatService::class.java).setAction(FloatService.ACTION_NEW))
         }
+        btn("Minimizar janelas (continuam ativas)") {
+            startForegroundService(Intent(this, FloatService::class.java).setAction(FloatService.ACTION_MIN))
+        }
+        btn("Mostrar janelas") {
+            startForegroundService(Intent(this, FloatService::class.java).setAction(FloatService.ACTION_SHOW))
+        }
+        val awake = Button(this)
+        fun awakeText() { awake.text = "Manter ativo com tela desligada: " + if (Prefs.keepAwake) "SIM" else "NÃO" }
+        awakeText()
+        awake.setOnClickListener {
+            Prefs.keepAwake = !Prefs.keepAwake; awakeText(); FloatService.instance?.updateLocks()
+        }
+        col.addView(awake)
         btn("Atualizar proxys agora") { refreshProxies() }
         btn("Proxys manuais") {
             editDialog("Um por linha: ip:porta ou usuario:senha@ip:porta", Prefs.manualText) {

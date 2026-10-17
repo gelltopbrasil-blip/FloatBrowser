@@ -66,7 +66,9 @@ browser.webRequest.onErrorOccurred.addListener(d => {
   if (!c || c.direct || !c.proxy) return;
   if (/PROXY|NET_TIMEOUT|CONNECTION_REFUSED|NET_RESET|NET_INTERRUPT/.test(d.error)) {
     errs[w] = (errs[w] || 0) + 1;
-    if (errs[w] >= 3) { errs[w] = 0; port.postMessage({ type: "fail", w: w }); }
+    // página principal recusada pelo proxy: troca já; outros erros: 3 seguidos
+    const limit = (d.type === "main_frame" && /PROXY/.test(d.error)) ? 1 : 3;
+    if (errs[w] >= limit) { errs[w] = 0; port.postMessage({ type: "fail", w: w }); }
   }
 }, { urls: ["<all_urls>"] });
 

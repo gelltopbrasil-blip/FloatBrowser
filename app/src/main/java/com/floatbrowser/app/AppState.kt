@@ -9,6 +9,9 @@ object Prefs {
     var manualText: String
         get() = sp.getString("manual", "") ?: ""
         set(v) { sp.edit().putString("manual", v).apply() }
+    var keepAwake: Boolean
+        get() = sp.getBoolean("awake", true)
+        set(v) { sp.edit().putBoolean("awake", v).apply() }
     var sourcesText: String
         get() = sp.getString("sources", ProxyPool.DEFAULT_SOURCES.joinToString("\n")) ?: ""
         set(v) { sp.edit().putString("sources", v).apply() }
