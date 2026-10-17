@@ -12,6 +12,7 @@ import android.text.InputType
 import android.text.TextUtils
 import android.view.ContextThemeWrapper
 import android.view.Gravity
+import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
@@ -23,6 +24,7 @@ import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
 import kotlinx.coroutines.launch
+import kotlin.math.abs
 import org.mozilla.geckoview.GeckoResult
 import org.mozilla.geckoview.GeckoSession
 import org.mozilla.geckoview.GeckoSessionSettings
@@ -58,6 +60,7 @@ class FloatWindow(
     private var badCount = 0
     private var asking = false
     private var dismissed = false
+    private var dismissedAt = 0L
     private var locking = false
     private var locked = false
     private var minimized = false
@@ -164,13 +167,46 @@ class FloatWindow(
             text = "—"; textSize = 18f; setTextColor(Color.WHITE)
             setPadding(px(8), px(6), px(8), px(6)); setOnClickListener { setMinimized(true) }
         }
-        val close = TextView(ctx).apply {
+        // ✕: toque rápido = fechar; SEGURAR = arrastar a janela (útil quando a janela está bem pequena)
+        val closeBtn = TextView(ctx).apply {
             text = "✕"; textSize = 18f; setTextColor(Color.WHITE)
-            setPadding(px(8), px(6), px(4), px(6)); setOnClickListener { close() }
+            setPadding(px(10), px(6), px(6), px(6))
+        }
+        var cx = 0f; var cy = 0f; var cox = 0; var coy = 0
+        var dragging = false; var moved = false
+        val hold = Runnable {
+            dragging = true
+            closeBtn.setTextColor(0xFFFFC107.toInt())
+            closeBtn.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+        }
+        closeBtn.setOnTouchListener { _, e ->
+            when (e.action) {
+                MotionEvent.ACTION_DOWN -> {
+                    cx = e.rawX; cy = e.rawY; cox = posX; coy = posY; dragging = false; moved = false
+                    handler.postDelayed(hold, 350); true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    if (dragging) {
+                        posX = cox + (e.rawX - cx).toInt(); posY = coy + (e.rawY - cy).toInt(); updateLayout()
+                    } else if (abs(e.rawX - cx) > px(10) || abs(e.rawY - cy) > px(10)) {
+                        moved = true; handler.removeCallbacks(hold)
+                    }
+                    true
+                }
+                MotionEvent.ACTION_UP -> {
+                    handler.removeCallbacks(hold); closeBtn.setTextColor(Color.WHITE)
+                    if (!dragging && !moved) this@FloatWindow.close()
+                    dragging = false; true
+                }
+                MotionEvent.ACTION_CANCEL -> {
+                    handler.removeCallbacks(hold); closeBtn.setTextColor(Color.WHITE); dragging = false; true
+                }
+                else -> false
+            }
         }
         barView.addView(modeIcon)
         barView.addView(label, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-        barView.addView(alphaBar); barView.addView(lockSwitch); barView.addView(minBtn); barView.addView(close)
+        barView.addView(alphaBar); barView.addView(lockSwitch); barView.addView(minBtn); barView.addView(closeBtn)
 
         var sx = 0f; var sy = 0f; var ox = 0; var oy = 0
         barView.setOnTouchListener { _, e ->
@@ -199,7 +235,7 @@ class FloatWindow(
         }
         val no = TextView(ctx).apply {
             text = "AGUARDAR"; setTextColor(0xFFFFCDD2.toInt()); textSize = 11f
-            setPadding(px(8), px(6), px(4), px(6)); setOnClickListener { dismissed = true; hideAsk() }
+            setPadding(px(8), px(6), px(4), px(6)); setOnClickListener { dismissed = true; dismissedAt = System.currentTimeMillis(); hideAsk() }
         }
         banner.addView(msg, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
         banner.addView(yes); banner.addView(no)
@@ -309,7 +345,10 @@ class FloatWindow(
             }
             else -> {
                 modeIcon.text = "⛔"; label.text = "$n · sem proxy (bloqueado)"
-                if (started && !dismissed) showAsk()
+                // se você escolheu AGUARDAR, pergunta de novo depois de 2 minutos
+                if (started && (!dismissed || System.currentTimeMillis() - dismissedAt > 120_000)) {
+                    dismissed = false; showAsk()
+                }
             }
         }
     }
@@ -369,7 +408,9 @@ class FloatWindow(
     /** Teste periódico (serviço): detecta proxy morto mesmo com a janela minimizada. */
     fun checkHealth() {
         if (direct || failing) return
-        val p = pool.current(id) ?: return
+        val p = pool.current(id)
+        if (p == null) { onPoolRefreshed(); refresh(); return } // tenta de novo e reavisa
+        
         AppState.scope.launch {
             if (pool.test(p, 3000) == null) {
                 badCount++
@@ -407,6 +448,18 @@ class FloatWindow(
     fun isMinimized() = minimized
 
     fun currentUrl(): String? = curUrl
+
+    /** Mantém a barra sempre por cima das outras janelas. */
+    fun raiseBar() {
+        if (!attached) return
+        runCatching { wm.removeView(barView); wm.addView(barView, barP) }
+    }
+
+    /** Depois de ligar a tela, recria a superfície do navegador (evita ficar em branco). */
+    fun refreshSurface() {
+        runCatching { gv.releaseSession(); gv.setSession(session) }
+        runCatching { session.setActive(true) }
+    }
 
     private fun recover() {
         handler.post {

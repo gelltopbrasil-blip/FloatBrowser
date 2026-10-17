@@ -32,6 +32,9 @@ object Prefs {
     var savedWindows: String
         get() = sp.getString("saved", "[]") ?: "[]"
         set(v) { sp.edit().putString("saved", v).apply() }
+    var bypassVpn: Boolean
+        get() = sp.getBoolean("bypassVpn", false)
+        set(v) { sp.edit().putBoolean("bypassVpn", v).apply() }
     var keepAwake: Boolean
         get() = sp.getBoolean("awake", true)
         set(v) { sp.edit().putBoolean("awake", v).apply() }

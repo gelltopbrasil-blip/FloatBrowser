@@ -78,7 +78,17 @@ class MainActivity : Activity() {
                 .show()
         }
         col.addView(dataBtn)
-        btn("Atualizar proxys agora") { refreshProxies() }
+        val vpnBtn = Button(this)
+        fun vpnText() {
+            vpnBtn.text = "Ignorar VPN (rede direta do operador): " + if (Prefs.bypassVpn) "SIM" else "NÃO"
+        }
+        vpnText()
+        vpnBtn.setOnClickListener {
+            Prefs.bypassVpn = !Prefs.bypassVpn; vpnText(); NetBind.apply(this)
+            status.text = if (Prefs.bypassVpn) "Só este app ignora o VPN agora" else "Este app volta a usar o VPN"
+        }
+        col.addView(vpnBtn)
+        btn("Atualizar proxys agora") { refreshProxies(true) }
         btn("Proxys manuais") {
             editDialog("Um por linha: ip:porta ou usuario:senha@ip:porta", Prefs.manualText) {
                 Prefs.manualText = it; AppState.reloadManual()
@@ -115,8 +125,8 @@ class MainActivity : Activity() {
         refreshProxies() // ao abrir o app, já busca e testa proxys novos
     }
 
-    private fun refreshProxies() {
-        scope.launch { AppState.pool.refresh { status.text = it } }
+    private fun refreshProxies(force: Boolean = false) {
+        scope.launch { AppState.pool.refresh(force) { status.text = it } }
     }
 
     private fun editDialog(title: String, initial: String, onOk: (String) -> Unit) {

@@ -1,7 +1,9 @@
 package com.floatbrowser.app
 
 import android.app.*
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.IntentFilter
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.graphics.drawable.Icon
@@ -40,14 +42,16 @@ class FloatService : Service() {
     private var wakeLock: PowerManager.WakeLock? = null
     private var wifiLock: WifiManager.WifiLock? = null
     private var netDown = false
+    private var lastRecover = 0L
+    private var screenRx: BroadcastReceiver? = null
     override fun onBind(i: Intent?): IBinder? = null
 
     private val netCb = object : ConnectivityManager.NetworkCallback() {
         override fun onLost(network: Network) { handler.post { netDown = true } }
         override fun onAvailable(network: Network) {
             handler.post {
-                if (netDown) {
-                    netDown = false
+                if (netDown && System.currentTimeMillis() - lastRecover > 20_000) {
+                    netDown = false; lastRecover = System.currentTimeMillis()
                     // rede voltou: espera estabilizar, recarrega as janelas e repõe proxys se faltar
                     handler.postDelayed({
                         windows.toList().forEach { it.onNetworkBack() }
@@ -62,6 +66,13 @@ class FloatService : Service() {
         super.onCreate()
         instance = this
         ProxyBridge.init(this)
+        val rx = object : BroadcastReceiver() {
+            override fun onReceive(c: Context?, i: Intent?) { windows.toList().forEach { it.refreshSurface() } }
+        }
+        screenRx = rx
+        val f = IntentFilter(Intent.ACTION_SCREEN_ON)
+        if (Build.VERSION.SDK_INT >= 33) registerReceiver(rx, f, Context.RECEIVER_NOT_EXPORTED)
+        else registerReceiver(rx, f)
         runCatching {
             getSystemService(ConnectivityManager::class.java).registerDefaultNetworkCallback(netCb)
         }
@@ -120,6 +131,7 @@ class FloatService : Service() {
             initialUrl = url)
         windows.add(w); w.show()
         if (min) w.setMinimized(true)
+        windows.forEach { it.raiseBar() }
         saveState()
         updateLocks()
         if (AppState.pool.size == 0) {
@@ -223,6 +235,7 @@ class FloatService : Service() {
 
     override fun onDestroy() {
         instance = null
+        screenRx?.let { runCatching { unregisterReceiver(it) } }
         runCatching { getSystemService(ConnectivityManager::class.java).unregisterNetworkCallback(netCb) }
         scope.cancel(); closeAll()
         runCatching { if (wakeLock?.isHeld == true) wakeLock?.release() }

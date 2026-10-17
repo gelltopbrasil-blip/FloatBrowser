@@ -1,6 +1,7 @@
 package com.floatbrowser.app
 
 import kotlinx.coroutines.*
+import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import okhttp3.Credentials
@@ -29,15 +30,17 @@ data class ProxyEntry(
 class ProxyPool(
     private val sources: () -> List<String> = { DEFAULT_SOURCES },
     private val maxPool: Int = 30,
-    private val maxCandidates: Int = 600,
-    private val parallel: Int = 80,
-    private val timeoutMs: Long = 4000
+    private val maxCandidates: Int = 300,
+    private val parallel: Int = 30,
+    private val timeoutMs: Long = 3000
 ) {
     companion object {
         val DEFAULT_SOURCES = listOf(
             "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt",
             "https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt",
-            "https://raw.githubusercontent.com/proxifly/free-proxy-list/main/proxies/protocols/http/data.txt"
+            "https://raw.githubusercontent.com/proxifly/free-proxy-list/main/proxies/protocols/http/data.txt",
+            "https://raw.githubusercontent.com/ShiftyTR/Proxy-List/master/http.txt",
+            "https://raw.githubusercontent.com/MuRongPIG/Proxy-Master/main/http.txt"
         )
         private val LINE = Regex("""^(?:(\w+)://)?(?:([^:@]+):([^@]+)@)?([\w.\-]+):(\d{2,5})$""")
         private val IP = Regex("""^[0-9a-fA-F:.]{7,45}$""")
@@ -46,6 +49,10 @@ class ProxyPool(
     private val http = OkHttpClient.Builder()
         .connectTimeout(timeoutMs, TimeUnit.MILLISECONDS)
         .readTimeout(timeoutMs, TimeUnit.MILLISECONDS).build()
+
+    // download das listas precisa de mais tempo que o teste de cada proxy
+    private val fetcher = http.newBuilder()
+        .connectTimeout(8, TimeUnit.SECONDS).readTimeout(15, TimeUnit.SECONDS).build()
 
     private val healthy = CopyOnWriteArrayList<ProxyEntry>()
     val manual = CopyOnWriteArrayList<ProxyEntry>()
@@ -62,14 +69,28 @@ class ProxyPool(
             m.groupValues[2].ifEmpty { null }, m.groupValues[3].ifEmpty { null })
     }
 
-    suspend fun refresh(onProgress: (String) -> Unit = {}): Int = withContext(Dispatchers.IO) {
+    private val refreshMutex = Mutex()
+    @Volatile private var lastRefresh = 0L
+
+    /** Atualização única e espaçada: evita a "tempestade" de testes que deixava a internet lenta. */
+    suspend fun refresh(force: Boolean = false, onProgress: (String) -> Unit = {}): Int {
+        val gap = if (size == 0) 45_000L else 180_000L
+        if (!force && System.currentTimeMillis() - lastRefresh < gap) return size
+        if (!refreshMutex.tryLock()) return size
+        try {
+            lastRefresh = System.currentTimeMillis()
+            return doRefresh(onProgress)
+        } finally { refreshMutex.unlock() }
+    }
+
+    private suspend fun doRefresh(onProgress: (String) -> Unit): Int = withContext(Dispatchers.IO) {
         withContext(Dispatchers.Main) { onProgress("Baixando listas…") }
         val raw = coroutineScope {
             sources().map { url -> async { runCatching { fetch(url) }.getOrDefault(emptyList()) } }
                 .awaitAll().flatten()
         }
         val candidates = raw.mapNotNull(::parse).distinctBy { it.key() }
-            .filter { !isQuarantined(it) }.shuffled().take(if (Prefs.isEco()) 150 else maxCandidates)
+            .filter { !isQuarantined(it) }.shuffled().take(if (Prefs.isEco()) 100 else maxCandidates)
         withContext(Dispatchers.Main) { onProgress("Testando ${candidates.size} proxys…") }
 
         val sem = Semaphore(parallel)
@@ -85,7 +106,7 @@ class ProxyPool(
     }
 
     private fun fetch(url: String): List<String> =
-        http.newCall(Request.Builder().url(url).build()).execute().use { r ->
+        fetcher.newCall(Request.Builder().url(url).build()).execute().use { r ->
             if (r.isSuccessful) r.body?.string()?.lineSequence()?.toList().orEmpty() else emptyList()
         }
 
