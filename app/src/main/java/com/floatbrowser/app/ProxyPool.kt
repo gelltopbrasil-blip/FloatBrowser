@@ -26,13 +26,15 @@ data class ProxyEntry(
 class ProxyPool(
     private val sources: () -> List<String> = { DEFAULT_SOURCES },
     private val maxPool: Int = 30,
-    private val maxCandidates: Int = 300,
-    private val parallel: Int = 50,
+    private val maxCandidates: Int = 600,
+    private val parallel: Int = 80,
     private val timeoutMs: Long = 4000
 ) {
     companion object {
         val DEFAULT_SOURCES = listOf(
-            "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt"
+            "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt",
+            "https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt",
+            "https://raw.githubusercontent.com/proxifly/free-proxy-list/main/proxies/protocols/http/data.txt"
         )
         private val LINE = Regex("""^(?:(\w+)://)?(?:([^:@]+):([^@]+)@)?([\w.\-]+):(\d{2,5})$""")
     }

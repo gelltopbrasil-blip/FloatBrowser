@@ -4,13 +4,14 @@ plugins {
 }
 android {
     namespace = "com.floatbrowser.app"
-    compileSdk = 34
+    compileSdk = 35
     defaultConfig {
         applicationId = "com.floatbrowser.app"
         minSdk = 26
         targetSdk = 34
-        versionCode = 1
-        versionName = "0.1"
+        versionCode = 2
+        versionName = "0.2"
+        ndk { abiFilters += "arm64-v8a" }
     }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
     kotlinOptions { jvmTarget = "17" }
@@ -18,4 +19,5 @@ android {
 dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    implementation("org.mozilla.geckoview:geckoview:+")
 }
