@@ -2,7 +2,6 @@ package com.floatbrowser.app
 
 import android.content.Context
 import org.json.JSONObject
-import org.mozilla.geckoview.GeckoResult
 import org.mozilla.geckoview.WebExtension
 
 /** Ponte entre o app e a extensão interna (proxy por janela, failover, scripts). */
@@ -45,11 +44,8 @@ object ProxyBridge {
         GeckoHolder.get(ctx).webExtensionController
             .ensureBuiltIn("resource://android/assets/proxyext/", EXT_ID)
             .accept(
-                GeckoResult.OnValueListener<WebExtension, Void> { ext ->
-                    ext?.setMessageDelegate(msgDelegate, "floatbrowser")
-                    null
-                },
-                GeckoResult.OnExceptionListener<Void> { _ -> null }
+                { ext -> ext?.setMessageDelegate(msgDelegate, "floatbrowser") },
+                { _ -> }
             )
     }
 
