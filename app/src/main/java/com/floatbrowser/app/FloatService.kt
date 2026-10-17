@@ -10,6 +10,7 @@ import android.os.IBinder
 import android.provider.Settings
 import android.view.WindowManager
 import android.widget.Toast
+import kotlinx.coroutines.*
 
 class FloatService : Service() {
     companion object {
@@ -21,7 +22,20 @@ class FloatService : Service() {
 
     private val windows = mutableListOf<FloatWindow>()
     private var counter = 0
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     override fun onBind(i: Intent?): IBinder? = null
+
+    override fun onCreate() {
+        super.onCreate()
+        ProxyBridge.init(this)
+        // atualiza a lista a cada 10 min enquanto houver janelas abertas
+        scope.launch {
+            while (true) {
+                delay(10 * 60_000L)
+                if (windows.isNotEmpty()) refreshPool()
+            }
+        }
+    }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         startAsForeground()
@@ -30,6 +44,11 @@ class FloatService : Service() {
             ACTION_STOP -> { closeAll(); stopForeground(STOP_FOREGROUND_REMOVE); stopSelf() }
         }
         return START_NOT_STICKY
+    }
+
+    private fun refreshPool() = scope.launch {
+        AppState.pool.refresh {}
+        windows.toList().forEach { it.onPoolRefreshed() }
     }
 
     private fun newWindow() {
@@ -42,6 +61,10 @@ class FloatService : Service() {
         val wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         val w = FloatWindow(this, wm, "w${++counter}", windows.size) { windows.remove(it) }
         windows.add(w); w.show()
+        if (AppState.pool.size == 0) {
+            Toast.makeText(this, "Buscando proxys…", Toast.LENGTH_SHORT).show()
+            refreshPool()
+        }
     }
 
     private fun closeAll() { windows.toList().forEach { it.close() } }
@@ -65,5 +88,5 @@ class FloatService : Service() {
         else startForeground(1, n)
     }
 
-    override fun onDestroy() { closeAll(); super.onDestroy() }
+    override fun onDestroy() { scope.cancel(); closeAll(); super.onDestroy() }
 }
