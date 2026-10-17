@@ -4,7 +4,7 @@ plugins {
 }
 android {
     namespace = "com.floatbrowser.app"
-    compileSdk = 36
+    compileSdk = 35
     defaultConfig {
         applicationId = "com.floatbrowser.app"
         minSdk = 26
@@ -19,5 +19,5 @@ android {
 dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
-    implementation("org.mozilla.geckoview:geckoview:+")
+    implementation("org.mozilla.geckoview:geckoview:[128.0,134.0)")
 }
