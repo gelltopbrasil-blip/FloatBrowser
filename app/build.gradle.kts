@@ -4,7 +4,7 @@ plugins {
 }
 android {
     namespace = "com.floatbrowser.app"
-    compileSdk = 35
+    compileSdk = 36
     defaultConfig {
         applicationId = "com.floatbrowser.app"
         minSdk = 26
