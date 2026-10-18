@@ -199,8 +199,14 @@ function __fbEngine(PASSOS, REPETIR, PAUSA, AUTO) {
   out.readOnly = true;
   const bcopy = h("button", BTN, "Copiar"), bup = h("button", BTN, "↑ Pai"), bsave = h("button", BTN + "background:#00796b;display:none;", "");
   [bsel, brec, bext, bx].forEach((b) => row1.appendChild(b));
-  [bcopy, bup, bsave].forEach((b) => row2.appendChild(b));
-  panel.appendChild(row1); panel.appendChild(out); panel.appendChild(row2);
+  const bmon = h("button", BTN, "👁 Monitorar");
+  const row3 = h("div", "margin-top:4px;display:flex;gap:4px;align-items:center;");
+  const INP = "font:13px sans-serif;padding:6px;border:0;border-radius:6px;background:#102027;color:#fff;box-sizing:border-box;";
+  const mevery = h("input", INP + "width:64px;"); mevery.type = "number"; mevery.min = "30"; mevery.value = "60"; mevery.title = "segundos entre as verificações";
+  const mtext = h("input", INP + "flex:1;min-width:0;"); mtext.placeholder = "avisar se contiver… (opcional)";
+  row3.appendChild(mevery); row3.appendChild(h("span", "font:12px sans-serif;", "s")); row3.appendChild(mtext);
+  [bcopy, bup, bmon, bsave].forEach((b) => row2.appendChild(b));
+  panel.appendChild(row1); panel.appendChild(out); panel.appendChild(row2); panel.appendChild(row3);
   sh.appendChild(handle); sh.appendChild(panel);
   document.documentElement.appendChild(host);
 
@@ -344,6 +350,28 @@ function __fbEngine(PASSOS, REPETIR, PAUSA, AUTO) {
     }
   };
 
+  // ---------- monitor de página (👁) ----------
+  let monOn = false;
+  function refreshMon() {
+    bmon.textContent = monOn ? "👁 Parar monitor" : "👁 Monitorar";
+    bmon.style.background = monOn ? "#c62828" : "#455a64";
+  }
+  try { monOn = !!(await browser.runtime.sendMessage({ cmd: "monGet" })); } catch (e) {}
+  refreshMon();
+  bmon.onclick = () => {
+    if (monOn) { post({ cmd: "monOff" }); monOn = false; refreshMon(); out.value = "Monitor desligado."; return; }
+    if (mode !== "pick" || !cur) {
+      out.value = "Primeiro toque em 🎯 Seletor e escolha o elemento (preço, texto…) que quer monitorar. Depois toque em 👁.";
+      return;
+    }
+    const sel = cssPath(cur);
+    const every = Math.max(30, parseInt(mevery.value, 10) || 60);
+    post({ cmd: "monSet", sel: sel, every: every, text: mtext.value.trim() });
+    monOn = true; refreshMon();
+    out.value = "Monitorando " + sel + " a cada " + every + " s.\nA página vai recarregar para ler o valor. Você recebe uma notificação quando mudar.";
+    setTimeout(() => location.reload(), 800);
+  };
+
   // retoma gravação ao trocar de página
   const st = await recGet();
   if (st && st.on) {
@@ -353,4 +381,29 @@ function __fbEngine(PASSOS, REPETIR, PAUSA, AUTO) {
     attachRec(); openPanel(); refreshButtons();
     out.value = "Gravando… " + st.steps.length + " passos";
   }
+})();
+
+/* FloatBrowser · Monitor de página (👁): a cada carga lê o elemento, avisa o app e agenda a próxima recarga */
+(async function () {
+  if (window.top !== window) return;
+  var cfg = null;
+  try { cfg = await browser.runtime.sendMessage({ cmd: "monGet" }); } catch (e) { return; }
+  if (!cfg || !cfg.sel) return;
+  var read = function () {
+    try {
+      var el = document.querySelector(cfg.sel);
+      return el ? String(el.innerText || el.textContent || "").replace(/\s+/g, " ").trim() : null;
+    } catch (e) { return null; }
+  };
+  var t0 = Date.now(), v = read();
+  while (v === null && Date.now() - t0 < 8000) { // páginas que montam o conteúdo depois
+    await new Promise(function (r) { setTimeout(r, 500); });
+    v = read();
+  }
+  try { browser.runtime.sendMessage({ type: "mon", value: v }); } catch (e) {}
+  setTimeout(async function () {
+    var c = null;
+    try { c = await browser.runtime.sendMessage({ cmd: "monGet" }); } catch (e) {}
+    if (c && c.sel) location.reload(); // só continua se o monitor ainda estiver ligado
+  }, Math.max(30, cfg.every || 60) * 1000);
 })();

@@ -64,6 +64,7 @@ port.onMessage.addListener(async m => {
     const t = T(m.w);
     t.monitor = m.on ? { sel: m.sel, every: Math.max(30, m.every || 60), text: m.text || "", last: undefined, hit: false } : null;
     toPages(m.w, stateOf(m.w));
+    monState(m.w);
   } else if (m.type === "autostart") { T(m.w).autostart = true; }
 });
 
@@ -85,7 +86,19 @@ browser.runtime.onConnect.addListener(p => {
 // mensagens dos scripts de usuário (automação)
 browser.runtime.onMessage.addListener((m, sender) => {
   if (!sender.tab) return;
-  onPage(who({ tabId: sender.tab.id, cookieStoreId: sender.tab.cookieStoreId }), m);
+  const w = who({ tabId: sender.tab.id, cookieStoreId: sender.tab.cookieStoreId });
+  // monitor de página (👁): a página pergunta o que monitorar, liga ou desliga
+  if (m && m.cmd === "monGet") {
+    const mon = w && T(w).monitor;
+    return Promise.resolve(mon ? { sel: mon.sel, every: mon.every } : null);
+  }
+  if (m && m.cmd === "monSet" && w) {
+    T(w).monitor = { sel: String(m.sel || ""), every: Math.max(30, m.every || 60), text: String(m.text || ""), last: undefined, hit: false };
+    monState(w);
+    return Promise.resolve(true);
+  }
+  if (m && m.cmd === "monOff" && w) { T(w).monitor = null; monState(w); return Promise.resolve(true); }
+  onPage(w, m);
 });
 
 function onPage(w, m) {
@@ -108,6 +121,11 @@ function onPage(w, m) {
   }
 }
 
+function monState(w) {
+  const mon = T(w).monitor;
+  port.postMessage({ type: "monstate", w: w, on: !!mon, sel: mon ? mon.sel : "", every: mon ? mon.every : 0 });
+}
+
 function monitorCheck(w, t, value) {
   const mon = t.monitor;
   if (!mon) return;
@@ -117,6 +135,7 @@ function monitorCheck(w, t, value) {
   }
   if (mon.last === undefined) {
     mon.last = value;
+    if (mon.text) mon.hit = value.toLowerCase().includes(mon.text.toLowerCase());
     port.postMessage({ type: "info", w: w, msg: "Monitorando. Valor atual: " + value });
     return;
   }

@@ -24,6 +24,7 @@ import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
 import kotlinx.coroutines.launch
+import org.json.JSONObject
 import kotlin.math.abs
 import org.mozilla.geckoview.GeckoResult
 import org.mozilla.geckoview.GeckoSession
@@ -68,6 +69,8 @@ class FloatWindow(
     private var attached = false
     private var curUrl: String? = initialUrl
     private var recoverCount = 0
+    private var monitoring = false
+    private var monKey: TextView? = null
     private var recoverSince = 0L
 
     private val barH = px(40)
@@ -271,15 +274,17 @@ class FloatWindow(
             setBackgroundColor(0xFF263238.toInt())
             setPadding(px(2), px(2), px(2), px(2))
         }
-        fun key(t: String, a: () -> Unit) {
-            keys.addView(TextView(ctx).apply {
-                text = t; textSize = 15f; setTextColor(Color.WHITE); gravity = Gravity.CENTER
+        fun key(t: String, a: () -> Unit): TextView {
+            val v = TextView(ctx).apply {
+                text = t; textSize = 14f; setTextColor(Color.WHITE); gravity = Gravity.CENTER
                 setBackgroundColor(0xFF37474F.toInt())
                 setPadding(0, px(6), 0, px(6))
                 setOnClickListener { a() }
-            }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+            }
+            keys.addView(v, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
                 setMargins(px(1), 0, px(1), 0)
             })
+            return v
         }
         key("◀") { session.goBack() }                       // voltar no site
         key("▶") { session.goForward() }                    // avançar
@@ -287,6 +292,7 @@ class FloatWindow(
         key("🔀") { swapProxy() }                            // trocar de proxy (novo IP)
         key("🌐") { session.loadUri("https://api.ipify.org") } // mostrar o IP de saída desta janela
         key("🛠") { toggleTools() }                          // ferramentas nas páginas: ligar/desligar
+        monKey = key("👁") { monitorKey() }                  // monitor de página: parar / como usar
 
         content.addView(banner)
         content.addView(keys)
@@ -326,7 +332,8 @@ class FloatWindow(
         session.setActive(true)
         ProxyBridge.register(id,
             onMapped = { ok -> mappedOk = ok; startPage(); refresh() },
-            onFail = { handleFail() })
+            onFail = { handleFail() },
+            onEvent = { m -> onBridgeEvent(m) })
         applyConfig()
         session.loadUri("http://floatbrowser.invalid/hello?w=$id")
         handler.postDelayed({ if (!started) { startPage(); refresh() } }, 2500)
@@ -420,6 +427,31 @@ class FloatWindow(
         ProxyBridge.setTools(Prefs.tools)
         Toast.makeText(svc, "Ferramentas 🛠 " + (if (Prefs.tools) "ligadas" else "desligadas") +
             " (valem nas próximas páginas)", Toast.LENGTH_SHORT).show()
+    }
+
+    /** Botão 👁: se há monitor ligado, desliga; senão explica como ligar (🛠 → 🎯 → 👁). */
+    private fun monitorKey() {
+        if (monitoring) ProxyBridge.monitor(id, false)
+        else Toast.makeText(svc, "Monitor: toque em 🛠, escolha o elemento com 🎯 e use 👁 Monitorar", Toast.LENGTH_LONG).show()
+    }
+
+    /** Eventos da extensão para esta janela: aviso de mudança, mensagens e estado do monitor. */
+    private fun onBridgeEvent(m: JSONObject) {
+        handler.post {
+            when (m.optString("type")) {
+                "monitor" -> {
+                    val nid = 200 + (id.removePrefix("w").toIntOrNull() ?: 0)
+                    Notify.alert(svc, nid, "${id.uppercase()}: mudou",
+                        (m.optString("old") + " → " + m.optString("new")).take(180))
+                }
+                "info" -> Toast.makeText(svc, m.optString("msg").take(200), Toast.LENGTH_LONG).show()
+                "monstate" -> {
+                    monitoring = m.optBoolean("on")
+                    monKey?.setBackgroundColor(if (monitoring) 0xFF00796B.toInt() else 0xFF37474F.toInt())
+                }
+                else -> {}
+            }
+        }
     }
 
     /** Resposta ao aviso "Sem proxy válido": liberar o IP real nesta janela. */

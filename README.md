@@ -5,7 +5,9 @@ proxy (lista gratuita, manual ou IP real), com troca automática quando o proxy 
 página (seletor 🎯, gravador, CSV, monitor) e scripts de automação.
 
 ## Teclas da janela
-Cada janela tem uma fileira de teclas: ◀ voltar · ▶ avançar · ⟳ recarregar · 🔀 trocar proxy (novo IP) · 🌐 mostrar o IP de saída · 🛠 ligar/desligar as ferramentas das páginas.
+Cada janela tem uma fileira de teclas: ◀ voltar · ▶ avançar · ⟳ recarregar · 🔀 trocar proxy (novo IP) · 🌐 mostrar o IP de saída · 🛠 ligar/desligar as ferramentas das páginas · 👁 monitor de página (fica verde quando ligado; toque para parar).
+
+**Monitor:** toque em 🛠 → 🎯 Seletor → escolha o elemento (preço, texto) → ajuste os segundos (mín. 30) e, se quiser, o texto a procurar → 👁 Monitorar. A janela recarrega a página no intervalo e avisa por notificação quando o valor muda (ou quando o texto aparece). Vale enquanto a janela estiver aberta.
 O IP real continua só no toque longo do ícone da barra, para evitar toque acidental.
 
 ## Compilar
