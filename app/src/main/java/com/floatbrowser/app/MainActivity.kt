@@ -149,7 +149,9 @@ class MainActivity : Activity() {
     // ---------- perfis ----------
     private fun profilesDialog() {
         val list = ProfileStore.list()
-        val items = (listOf("➕ Novo perfil") + list.map { "👤 ${it.name}  ·  ${it.proxy}" }).toTypedArray()
+        val items = (listOf("➕ Novo perfil") + list.map {
+            "👤 ${it.name}  ·  ${it.proxy}" + if (it.monSel.isNotEmpty()) "  ·  👁" else ""
+        }).toTypedArray()
         AlertDialog.Builder(this).setTitle("Perfis").setItems(items) { _, i ->
             if (i == 0) editProfile(null) else profileActions(list[i - 1])
         }.show()
@@ -246,7 +248,10 @@ class MainActivity : Activity() {
             old == null && ProfileStore.get(name) != null -> status.text = "Já existe um perfil com esse nome"
             !proxy.equals("auto", true) && !proxy.equals("direto", true) && AppState.pool.parse(proxy) == null ->
                 status.text = "Proxy inválido: use auto, direto ou ip:porta"
-            else -> { ProfileStore.save(Profile(name, url, proxy)); status.text = "Perfil \"$name\" salvo" }
+            else -> {
+                val base = ProfileStore.get(name) ?: Profile(name, url, proxy)   // mantém o monitor salvo
+                ProfileStore.save(base.copy(url = url, proxy = proxy)); status.text = "Perfil \"$name\" salvo"
+            }
         }
     }
 

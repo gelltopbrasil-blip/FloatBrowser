@@ -358,7 +358,14 @@ class FloatWindow(
     private fun startPage() {
         if (started) return
         started = true
+        restoreMonitor()
         load(curUrl ?: "https://www.google.com")
+    }
+
+    /** Perfil com monitor salvo: religa o monitor antes de carregar a página. */
+    private fun restoreMonitor() {
+        val p = profile?.let { ProfileStore.get(it.name) } ?: return
+        if (p.monSel.isNotEmpty()) ProxyBridge.monitor(id, true, p.monSel, p.monEvery, p.monText)
     }
 
     fun load(input: String) {
@@ -488,6 +495,10 @@ class FloatWindow(
                 "monstate" -> {
                     monitoring = m.optBoolean("on")
                     monKey?.setBackgroundColor(if (monitoring) 0xFF00796B.toInt() else 0xFF37474F.toInt())
+                    profile?.let { pr ->   // janela de perfil: o monitor fica salvo no perfil
+                        if (monitoring) ProfileStore.setMonitor(pr.name, m.optString("sel"), m.optInt("every", 60), m.optString("text"))
+                        else ProfileStore.setMonitor(pr.name, "", 60, "")
+                    }
                 }
                 else -> {}
             }

@@ -5,14 +5,19 @@ import org.json.JSONObject
 import java.util.Calendar
 
 /** Perfil = site inicial + proxy (auto, direto ou ip:porta) + cookies próprios (um por nome). */
-data class Profile(val name: String, val url: String, val proxy: String)
+data class Profile(
+    val name: String, val url: String, val proxy: String,
+    /** Monitor de página guardado no perfil (vazio = sem monitor): seletor, segundos e texto a procurar. */
+    val monSel: String = "", val monEvery: Int = 60, val monText: String = ""
+)
 
 object ProfileStore {
     fun list(): List<Profile> {
         val a = runCatching { JSONArray(Prefs.profilesJson) }.getOrNull() ?: return emptyList()
         return (0 until a.length()).map {
             val o = a.getJSONObject(it)
-            Profile(o.getString("name"), o.optString("url"), o.optString("proxy", "auto"))
+            Profile(o.getString("name"), o.optString("url"), o.optString("proxy", "auto"),
+                o.optString("monSel", ""), o.optInt("monEvery", 60), o.optString("monText", ""))
         }
     }
     fun get(n: String) = list().firstOrNull { it.name == n }
@@ -23,9 +28,18 @@ object ProfileStore {
     }
     fun save(p: Profile) = write(list().filter { it.name != p.name } + p)
     fun remove(n: String) = write(list().filter { it.name != n })
+    /** Guarda (ou limpa, com sel vazio) o monitor do perfil, mantendo a ordem da lista. */
+    fun setMonitor(name: String, sel: String, every: Int, text: String) {
+        val p = get(name) ?: return
+        if (p.monSel == sel && p.monEvery == every && p.monText == text) return
+        write(list().map { if (it.name == name) it.copy(monSel = sel, monEvery = every, monText = text) else it })
+    }
     private fun write(l: List<Profile>) {
         val a = JSONArray()
-        l.forEach { a.put(JSONObject().put("name", it.name).put("url", it.url).put("proxy", it.proxy)) }
+        l.forEach {
+            a.put(JSONObject().put("name", it.name).put("url", it.url).put("proxy", it.proxy)
+                .put("monSel", it.monSel).put("monEvery", it.monEvery).put("monText", it.monText))
+        }
         Prefs.profilesJson = a.toString()
     }
 }

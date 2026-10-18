@@ -69,7 +69,7 @@ port.onMessage.addListener(async m => {
   else if (m.type === "ui") toPages(m.w, { cmd: "ui", tool: m.tool });   // teclas da janela acionam as ferramentas da página
 });
 
-// ---------- páginas (content.js) ----------
+// ---------- páginas (porta "page" aberta por tools.js: recebe comandos das teclas da janela) ----------
 browser.runtime.onConnect.addListener(p => {
   if (p.name !== "page" || !p.sender || !p.sender.tab) return;
   const tabId = p.sender.tab.id;
@@ -124,7 +124,7 @@ function onPage(w, m) {
 
 function monState(w) {
   const mon = T(w).monitor;
-  port.postMessage({ type: "monstate", w: w, on: !!mon, sel: mon ? mon.sel : "", every: mon ? mon.every : 0 });
+  port.postMessage({ type: "monstate", w: w, on: !!mon, sel: mon ? mon.sel : "", every: mon ? mon.every : 0, text: mon ? mon.text : "" });
 }
 
 function monitorCheck(w, t, value) {

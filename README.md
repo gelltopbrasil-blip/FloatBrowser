@@ -11,7 +11,6 @@ Linha 2 (ferramentas, agem na página da própria janela): 🎯 seletor CSS · �
 O IP real continua só no toque longo do ícone da barra, para evitar toque acidental.
 
 **Monitor:** toque em 🎯 e escolha o elemento (preço, texto) → ajuste os segundos (mín. 30) e, se quiser, o texto a procurar no painel → toque em 👁. A janela recarrega a página no intervalo e avisa por notificação quando o valor muda (ou quando o texto aparece). Vale enquanto a janela estiver aberta.
-O IP real continua só no toque longo do ícone da barra, para evitar toque acidental.
 
 ## Perfis
 Tela inicial → **Perfis**: crie um perfil com nome, site inicial e proxy (`auto`, `direto` ou `ip:porta`).
@@ -25,6 +24,17 @@ Na hora, o app abre a janela do perfil (site, proxy e cookies próprios) ou, se 
 Para o script rodar sozinho, deixe `INICIAR_AUTOMATICO = true` nele. Com agendamentos ativos o app mantém o serviço
 ligado (notificação fixa) e, com "Manter ativo com tela desligada: SIM", o aparelho não dorme. Se você tocar em
 **Parar** na notificação, o agendador só volta quando abrir o app de novo. Não reinicia sozinho após reiniciar o celular.
+
+## Perfis com monitor
+Se você liga o monitor 👁 numa janela de **perfil**, ele fica salvo no perfil (aparece 👁 na lista). Ao abrir o perfil
+de novo, o monitor volta sozinho. Desligar o monitor na janela remove do perfil. Editar o perfil não apaga o monitor.
+
+## Assinatura fixa (atualizar sem desinstalar)
+No Termux, dentro da pasta do repositório: `bash tools/gerar-chave.sh`. Ele cria uma chave própria (uma vez) e guarda
+nos *secrets* do GitHub (`FB_KEYSTORE_B64`, `FB_KEYSTORE_PASSWORD`, `FB_KEY_ALIAS`, `FB_KEY_PASSWORD`).
+O release do GitHub Actions passa a sair sempre com a mesma assinatura.
+**Guarde o arquivo `~/floatbrowser.jks` e a senha `~/floatbrowser.pass` em local seguro**: sem eles não dá para atualizar por cima.
+Na primeira vez, desinstale a versão antiga (assinada com outra chave) antes de instalar.
 
 ## Compilar
 ```
