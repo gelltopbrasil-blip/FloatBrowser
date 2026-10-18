@@ -2,7 +2,11 @@ name: Build APK
 on:
   push:
     branches: [ main ]
+  pull_request:
   workflow_dispatch:
+env:
+  # Opcional: secrets para assinar o release (sem eles, o release usa a chave debug)
+  KS_B64: ${{ secrets.FB_KEYSTORE_B64 }}
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -12,8 +16,28 @@ jobs:
         with: { distribution: temurin, java-version: 17 }
       - uses: gradle/actions/setup-gradle@v4
         with: { gradle-version: 8.7 }
-      - run: gradle assembleDebug --no-daemon
+      - name: Keystore (opcional)
+        if: env.KS_B64 != ''
+        run: |
+          echo "$KS_B64" | base64 -d > "$RUNNER_TEMP/fb.jks"
+          echo "FB_KEYSTORE=$RUNNER_TEMP/fb.jks" >> "$GITHUB_ENV"
+          echo "FB_KEYSTORE_PASSWORD=${{ secrets.FB_KEYSTORE_PASSWORD }}" >> "$GITHUB_ENV"
+          echo "FB_KEY_ALIAS=${{ secrets.FB_KEY_ALIAS }}" >> "$GITHUB_ENV"
+          echo "FB_KEY_PASSWORD=${{ secrets.FB_KEY_PASSWORD }}" >> "$GITHUB_ENV"
+      - name: Testes unitários
+        run: gradle testDebugUnitTest --no-daemon
+      - name: Gerar APKs (debug e release)
+        run: gradle assembleDebug assembleRelease --no-daemon
+      - name: Versão do GeckoView resolvida (use para fixar no gradle.properties)
+        run: |
+          echo "### GeckoView resolvido" >> "$GITHUB_STEP_SUMMARY"
+          gradle :app:dependencies --configuration releaseRuntimeClasspath --no-daemon -q \
+            | grep -i "geckoview" | head -3 | tee -a "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         with:
           name: FloatBrowser-debug
           path: app/build/outputs/apk/debug/*.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: FloatBrowser-release
+          path: app/build/outputs/apk/release/*.apk

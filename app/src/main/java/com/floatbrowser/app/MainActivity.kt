@@ -43,6 +43,11 @@ class MainActivity : Activity() {
             text = t; setOnClickListener { a() }
         })
 
+        col.addView(TextView(this).apply {
+            textSize = 12f; setPadding(0, 0, 0, 24)
+            text = "⚠ Proxys gratuitos podem ler ou alterar tráfego sem HTTPS. " +
+                "Evite logins e dados sensíveis; para isso prefira proxys manuais de confiança."
+        })
         btn("1) Permitir janelas flutuantes") {
             startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
         }

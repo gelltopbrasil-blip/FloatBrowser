@@ -61,7 +61,7 @@ object Schedules {
     fun toggle(id: String) = write(list().map { if (it.id == id) it.copy(enabled = !it.enabled) else it })
     fun remove(id: String) = write(list().filter { it.id != id })
 
-    private fun isDue(s: Schedule, now: Long): Boolean {
+    internal fun isDue(s: Schedule, now: Long): Boolean {
         val spec = s.spec.trim().lowercase()
         DAILY.matchEntire(spec)?.let { m ->
             val c = Calendar.getInstance().apply {

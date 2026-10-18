@@ -54,7 +54,8 @@ class ProxyPool(
     private val fetcher = http.newBuilder()
         .connectTimeout(8, TimeUnit.SECONDS).readTimeout(15, TimeUnit.SECONDS).build()
 
-    private val healthy = CopyOnWriteArrayList<ProxyEntry>()
+    // troca de referência atômica: leitores nunca veem a lista vazia durante o refresh
+    @Volatile private var healthy = CopyOnWriteArrayList<ProxyEntry>()
     val manual = CopyOnWriteArrayList<ProxyEntry>()
     private val inUse = ConcurrentHashMap<String, ProxyEntry>()
     private val quarantined = ConcurrentHashMap<String, Long>()
@@ -100,7 +101,7 @@ class ProxyPool(
             .distinctBy { it.ipKey() }          // nunca dois proxys com o mesmo IP de saída
             .take(maxPool)
 
-        healthy.clear(); healthy.addAll(ok)
+        healthy = CopyOnWriteArrayList(ok)
         withContext(Dispatchers.Main) { onProgress("${ok.size} proxys funcionando") }
         ok.size
     }
