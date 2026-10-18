@@ -16,6 +16,11 @@ object ProfileStore {
         }
     }
     fun get(n: String) = list().firstOrNull { it.name == n }
+    /** Id estável (só letras, números e _) do baú de cookies do perfil: cada nome tem o seu. */
+    fun contextId(name: String): String {
+        val n = name.trim()
+        return "ctx_p_" + n.replace(Regex("[^A-Za-z0-9]"), "_") + "_" + Integer.toHexString(n.hashCode())
+    }
     fun save(p: Profile) = write(list().filter { it.name != p.name } + p)
     fun remove(n: String) = write(list().filter { it.name != n })
     private fun write(l: List<Profile>) {

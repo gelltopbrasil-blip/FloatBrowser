@@ -156,6 +156,15 @@ class ProxyPool(
         return p
     }
 
+    /** Perfil com proxy fixo: usa exatamente este proxy, salvo se outra janela já usa o mesmo IP. */
+    @Synchronized
+    fun assignExact(windowId: String, p: ProxyEntry): Boolean {
+        inUse.remove(windowId)
+        if (p.ipKey() in takenExcept(windowId) || isQuarantined(p)) return false
+        inUse[windowId] = p
+        return true
+    }
+
     @Synchronized
     private fun claim(windowId: String, p: ProxyEntry): Boolean {
         if (inUse.filterKeys { it != windowId }.values.any { it.ipKey() == p.ipKey() }) return false
