@@ -29,6 +29,8 @@ class FloatService : Service() {
         const val ACTION_MIN = "min"
         const val ACTION_SHOW = "show"
         const val ACTION_REAL = "real"
+        const val ACTION_PROFILE = "profile"
+        const val ACTION_SCHED = "sched"
         private const val CH = "float"
         private const val CH_ALERT = "alert"
         private const val MAX = 4
@@ -89,6 +91,12 @@ class FloatService : Service() {
                 saveState()
             }
         }
+        scope.launch {   // agendador: a cada 30 s abre (ou recarrega) os perfis que venceram
+            while (true) {
+                delay(30_000L)
+                Schedules.due(System.currentTimeMillis()).forEach { runScheduled(it) }
+            }
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -96,6 +104,8 @@ class FloatService : Service() {
         if (intent == null) restoreWindows() // o sistema reiniciou o serviço depois de matar o app
         when (intent?.action) {
             ACTION_NEW -> newWindow()
+            ACTION_PROFILE -> intent?.getStringExtra("name")?.let { openProfile(it) }
+            ACTION_SCHED -> {}   // só garante que o serviço (e o agendador) está de pé
             ACTION_MIN -> { windows.forEach { it.setMinimized(true) }; saveState() }
             ACTION_SHOW -> { windows.forEach { it.setMinimized(false) }; saveState() }
             ACTION_REAL -> {
@@ -108,6 +118,7 @@ class FloatService : Service() {
                 return START_NOT_STICKY
             }
         }
+        updateLocks()
         notifyNow()
         return START_STICKY
     }
@@ -117,7 +128,25 @@ class FloatService : Service() {
         windows.toList().forEach { it.onPoolRefreshed() }
     }
 
-    private fun newWindow(url: String? = null, min: Boolean = false) {
+    /** Agendamento venceu: se o perfil já está aberto recarrega a página, senão abre a janela do perfil. */
+    private fun runScheduled(s: Schedule) {
+        val open = windows.firstOrNull { it.profileName == s.profile }
+        if (open != null) open.reloadPage() else openProfile(s.profile)
+        Notify.alert(this, 300, "Agendamento", "Perfil \"${s.profile}\" (${s.spec})")
+    }
+
+    /** Abre uma janela com o perfil: site, proxy e cookies próprios (um perfil por janela). */
+    private fun openProfile(name: String) {
+        val p = ProfileStore.get(name) ?: run {
+            Toast.makeText(this, "Perfil não encontrado", Toast.LENGTH_SHORT).show(); return
+        }
+        if (windows.any { it.profileName == name }) {
+            Toast.makeText(this, "O perfil \"$name\" já está aberto", Toast.LENGTH_SHORT).show(); return
+        }
+        newWindow(p.url.ifEmpty { null }, false, p)
+    }
+
+    private fun newWindow(url: String? = null, min: Boolean = false, profile: Profile? = null) {
         if (!Settings.canDrawOverlays(this)) {
             Toast.makeText(this, "Permita a sobreposição primeiro", Toast.LENGTH_LONG).show(); return
         }
@@ -128,7 +157,8 @@ class FloatService : Service() {
         val w = FloatWindow(this, wm, "w${++counter}", windows.size,
             onClosed = { windows.remove(it); updateLocks(); notifyNow(); saveState() },
             onDecision = { win, ask -> decision(win, ask) },
-            initialUrl = url)
+            initialUrl = url,
+            profile = profile)
         windows.add(w); w.show()
         if (min) w.setMinimized(true)
         windows.forEach { it.raiseBar() }
@@ -144,7 +174,8 @@ class FloatService : Service() {
     private fun saveState() {
         val arr = JSONArray()
         windows.forEach {
-            arr.put(JSONObject().put("u", it.currentUrl() ?: JSONObject.NULL).put("m", it.isMinimized()))
+            arr.put(JSONObject().put("u", it.currentUrl() ?: JSONObject.NULL).put("m", it.isMinimized())
+                .put("p", it.profileName ?: JSONObject.NULL))
         }
         Prefs.savedWindows = arr.toString()
     }
@@ -154,14 +185,15 @@ class FloatService : Service() {
         val arr = runCatching { JSONArray(Prefs.savedWindows) }.getOrNull() ?: return
         for (i in 0 until minOf(arr.length(), MAX)) {
             val o = arr.getJSONObject(i)
-            newWindow(if (o.isNull("u")) null else o.getString("u"), o.optBoolean("m"))
+            val pn = if (o.isNull("p")) null else o.getString("p")
+            newWindow(if (o.isNull("u")) null else o.getString("u"), o.optBoolean("m"), pn?.let { ProfileStore.get(it) })
         }
     }
 
     private fun closeAll() { windows.toList().forEach { it.close() } }
 
     fun updateLocks() {
-        val want = Prefs.keepAwake && windows.isNotEmpty()
+        val want = Prefs.keepAwake && (windows.isNotEmpty() || Schedules.list().any { it.enabled })
         runCatching {
             if (want) {
                 if (wakeLock == null)
@@ -221,7 +253,7 @@ class FloatService : Service() {
         }
         val n = Notification.Builder(this, CH)
             .setContentTitle("FloatBrowser ativo")
-            .setContentText(state)
+            .setContentText(state + Schedules.list().count { it.enabled }.let { if (it > 0) " · $it agendamento(s)" else "" })
             .setSmallIcon(android.R.drawable.ic_menu_view)
             .setContentIntent(open)
             .addAction(action("Mostrar", ACTION_SHOW, 1))

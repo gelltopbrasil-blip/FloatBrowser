@@ -55,6 +55,8 @@ class MainActivity : Activity() {
             if (!Settings.canDrawOverlays(this)) status.text = "Faça o passo 1 primeiro"
             else startForegroundService(Intent(this, FloatService::class.java).setAction(FloatService.ACTION_NEW))
         }
+        btn("Perfis (site + proxy + cookies próprios)") { profilesDialog() }
+        btn("Agendamentos (abrir perfil no horário)") { schedulesDialog() }
         btn("Minimizar janelas (continuam ativas)") {
             startForegroundService(Intent(this, FloatService::class.java).setAction(FloatService.ACTION_MIN))
         }
@@ -137,7 +139,115 @@ class MainActivity : Activity() {
         col.addView(status)
         setContentView(ScrollView(this).apply { addView(col) })
 
+        // com agendamentos ativos, garante o serviço (agendador) de pé ao abrir o app
+        if (Schedules.list().any { it.enabled })
+            startForegroundService(Intent(this, FloatService::class.java).setAction(FloatService.ACTION_SCHED))
+
         refreshProxies() // ao abrir o app, já busca e testa proxys novos
+    }
+
+    // ---------- perfis ----------
+    private fun profilesDialog() {
+        val list = ProfileStore.list()
+        val items = (listOf("➕ Novo perfil") + list.map { "👤 ${it.name}  ·  ${it.proxy}" }).toTypedArray()
+        AlertDialog.Builder(this).setTitle("Perfis").setItems(items) { _, i ->
+            if (i == 0) editProfile(null) else profileActions(list[i - 1])
+        }.show()
+    }
+
+    private fun profileActions(p: Profile) {
+        AlertDialog.Builder(this).setTitle(p.name)
+            .setItems(arrayOf("Abrir janela", "Editar", "Excluir")) { _, a ->
+                when (a) {
+                    0 -> openProfile(p)
+                    1 -> editProfile(p)
+                    else -> { ProfileStore.remove(p.name); status.text = "Perfil excluído" }
+                }
+            }.show()
+    }
+
+    // ---------- agendamentos ----------
+    private fun schedulesDialog() {
+        val list = Schedules.list()
+        val items = (listOf("➕ Novo agendamento") + list.map {
+            (if (it.enabled) "✅ " else "⛔ ") + "${it.profile}  ·  ${it.spec}"
+        }).toTypedArray()
+        AlertDialog.Builder(this).setTitle("Agendamentos").setItems(items) { _, i ->
+            if (i == 0) newSchedule() else scheduleActions(list[i - 1])
+        }.show()
+    }
+
+    private fun scheduleActions(s: Schedule) {
+        AlertDialog.Builder(this).setTitle("${s.profile}  ·  ${s.spec}")
+            .setItems(arrayOf("Ativar / desativar", "Excluir")) { _, a ->
+                if (a == 0) Schedules.toggle(s.id) else Schedules.remove(s.id)
+                schedulesChanged("Agendamentos atualizados")
+            }.show()
+    }
+
+    private fun newSchedule() {
+        val names = ProfileStore.list().map { it.name }.toTypedArray()
+        if (names.isEmpty()) { status.text = "Crie um perfil primeiro"; return }
+        AlertDialog.Builder(this).setTitle("Qual perfil?").setItems(names) { _, i ->
+            val et = EditText(this)
+            et.hint = "08:30 (todo dia) ou 30m / 2h (a cada)"; et.setSingleLine()
+            AlertDialog.Builder(this).setTitle("Quando? — ${names[i]}").setView(et)
+                .setPositiveButton("Salvar") { _, _ -> saveSchedule(names[i], et.text.toString()) }
+                .setNegativeButton("Cancelar", null).show()
+        }.show()
+    }
+
+    private fun saveSchedule(profile: String, spec: String) {
+        if (!Schedules.valid(spec)) { status.text = "Horário inválido: use 08:30, 30m ou 2h"; return }
+        Schedules.add(profile, spec)
+        schedulesChanged("Agendamento salvo")
+    }
+
+    private fun schedulesChanged(msg: String) {
+        status.text = msg
+        if (Schedules.list().any { it.enabled })
+            startForegroundService(Intent(this, FloatService::class.java).setAction(FloatService.ACTION_SCHED))
+        FloatService.instance?.updateLocks()
+    }
+
+    private fun openProfile(p: Profile) {
+        if (!Settings.canDrawOverlays(this)) { status.text = "Faça o passo 1 primeiro"; return }
+        startForegroundService(Intent(this, FloatService::class.java)
+            .setAction(FloatService.ACTION_PROFILE).putExtra("name", p.name))
+        status.text = "Abrindo \"${p.name}\"…"
+    }
+
+    private fun editProfile(old: Profile?) {
+        val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(40, 20, 40, 0) }
+        fun field(hint: String, value: String): EditText {
+            val e = EditText(this)
+            e.hint = hint; e.setText(value); e.setSingleLine()
+            e.inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
+            col.addView(e)
+            return e
+        }
+        val n = field("Nome (ex.: conta1)", old?.name ?: "")
+        val u = field("Site inicial (opcional)", old?.url ?: "")
+        val p = field("Proxy: auto, direto ou ip:porta", old?.proxy ?: "auto")
+        if (old != null) n.isEnabled = false   // o nome define o baú de cookies: não renomear
+        AlertDialog.Builder(this).setTitle(if (old == null) "Novo perfil" else "Editar perfil").setView(col)
+            .setPositiveButton("Salvar") { _, _ ->
+                saveProfile(old, n.text.toString(), u.text.toString(), p.text.toString())
+            }
+            .setNegativeButton("Cancelar", null).show()
+    }
+
+    private fun saveProfile(old: Profile?, rawName: String, rawUrl: String, rawProxy: String) {
+        val name = rawName.trim()
+        val url = rawUrl.trim()
+        val proxy = rawProxy.trim().ifEmpty { "auto" }
+        when {
+            name.isEmpty() -> status.text = "Dê um nome ao perfil"
+            old == null && ProfileStore.get(name) != null -> status.text = "Já existe um perfil com esse nome"
+            !proxy.equals("auto", true) && !proxy.equals("direto", true) && AppState.pool.parse(proxy) == null ->
+                status.text = "Proxy inválido: use auto, direto ou ip:porta"
+            else -> { ProfileStore.save(Profile(name, url, proxy)); status.text = "Perfil \"$name\" salvo" }
+        }
     }
 
     private fun refreshProxies(force: Boolean = false) {

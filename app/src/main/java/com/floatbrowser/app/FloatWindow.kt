@@ -45,7 +45,8 @@ class FloatWindow(
     slot: Int,
     private val onClosed: (FloatWindow) -> Unit,
     private val onDecision: (FloatWindow, Boolean) -> Unit,
-    private val initialUrl: String? = null
+    private val initialUrl: String? = null,
+    val profile: Profile? = null
 ) {
     private val ctx = ContextThemeWrapper(svc, android.R.style.Theme_Material_Light)
     private val d = svc.resources.displayMetrics.density
@@ -53,7 +54,14 @@ class FloatWindow(
     private val pool = AppState.pool
     private val handler = Handler(Looper.getMainLooper())
 
-    private var direct = false
+    // perfil com proxy fixo (ip:porta): usado na 1ª atribuição; se cair, a janela volta ao automático
+    private val pinned: ProxyEntry? = profile?.proxy?.let { spec ->
+        if (spec.equals("auto", true) || spec.equals("direto", true)) null else pool.parse(spec)
+    }
+    private var pinTried = false
+    val profileName: String? get() = profile?.name
+
+    private var direct = (profile?.proxy ?: "").equals("direto", ignoreCase = true)
     private var started = false
     private var mappedOk = false
     private var lastFail = 0L
@@ -98,7 +106,7 @@ class FloatWindow(
         GeckoSessionSettings.Builder()
             .userAgentMode(GeckoSessionSettings.USER_AGENT_MODE_DESKTOP)
             .viewportMode(GeckoSessionSettings.VIEWPORT_MODE_DESKTOP)
-            .contextId("ctx_$id")
+            .contextId(if (profile != null) ProfileStore.contextId(profile.name) else "ctx_$id")
             .build()
     )
     private val gv = GeckoView(ctx)
@@ -359,13 +367,20 @@ class FloatWindow(
 
     // ---------- proxy ----------
     private fun applyConfig() {
-        val p = if (direct) null else (pool.current(id) ?: pool.assignTo(id))
+        val p = if (direct) null else (pool.current(id) ?: pinnedFirst() ?: pool.assignTo(id))
         ProxyBridge.setConfig(id, p, direct)
         refresh()
     }
 
+    private fun pinnedFirst(): ProxyEntry? {
+        val pin = pinned ?: return null
+        if (pinTried) return null
+        pinTried = true
+        return if (pool.assignExact(id, pin)) pin else null
+    }
+
     private fun refresh() {
-        val n = id.uppercase()
+        val n = profile?.name ?: id.uppercase()
         val p = pool.current(id)
         val warn = if (started && !mappedOk) "⚠ " else ""
         when {
@@ -410,6 +425,9 @@ class FloatWindow(
         applyConfig()
         session.reload()
     }
+
+    /** Usado pelo agendador: recarrega a página do perfil (scripts com INICIAR_AUTOMATICO rodam de novo). */
+    fun reloadPage() { session.reload() }
 
     /** Botão 🔀: descarta o proxy atual (quarentena) e testa outros para dar um novo IP. */
     private fun swapProxy() {
