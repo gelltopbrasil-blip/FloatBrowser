@@ -27,6 +27,10 @@ object ScriptStore {
 
     private fun clean(n: String) = n.replace(Regex("""[^\w.\-]"""), "_")
 
+    fun saveGenerated(name: String, text: String) {
+        File(dir, clean(if (name.endsWith(".js", true)) name else "$name.js")).writeText(text)
+    }
+
     fun importStream(name: String, input: InputStream): Int {
         if (name.endsWith(".zip", true) || name.endsWith(".xpi", true)) {
             var c = 0
@@ -49,7 +53,7 @@ object ScriptStore {
 
     fun payload(): JSONObject {
         val arr = JSONArray()
-        val rx = Regex("""//\s*@match\s+(\S+)""")
+        val rx = Regex("""(?m)^\s*//\s*@match\s+(\S+)""")
         list().filter { enabled(it) }.forEach { n ->
             val code = File(dir, n).readText()
             val m = rx.findAll(code).map { it.groupValues[1] }.toList().ifEmpty { listOf("<all_urls>") }

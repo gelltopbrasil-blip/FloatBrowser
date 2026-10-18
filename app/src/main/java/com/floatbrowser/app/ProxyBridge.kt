@@ -4,7 +4,7 @@ import android.content.Context
 import org.json.JSONObject
 import org.mozilla.geckoview.WebExtension
 
-/** Ponte entre o app e a extensão interna (proxy por janela, failover, scripts). */
+/** Ponte entre o app e a extensão interna (proxy por janela, ferramentas, scripts). */
 object ProxyBridge {
     private const val EXT_ID = "floatproxy@floatbrowser.app"
     private var port: WebExtension.Port? = null
@@ -13,6 +13,7 @@ object ProxyBridge {
     private var scripts: JSONObject? = null
     private val mappedCb = HashMap<String, (Boolean) -> Unit>()
     private val failCb = HashMap<String, () -> Unit>()
+    private val eventCb = HashMap<String, (JSONObject) -> Unit>()
 
     private val portDelegate = object : WebExtension.PortDelegate {
         override fun onPortMessage(message: Any, port: WebExtension.Port) {
@@ -21,6 +22,10 @@ object ProxyBridge {
             when (m.optString("type")) {
                 "mapped" -> mappedCb[w]?.invoke(m.optBoolean("ok", true))
                 "fail" -> failCb[w]?.invoke()
+                "csv" -> ToolsNative.saveCsv(m.optString("name"), m.optString("text"))
+                "savescript" -> ToolsNative.saveScript(m.optString("name"), m.optString("text"))
+                "copy" -> ToolsNative.copy(m.optString("text"))
+                else -> eventCb[w]?.invoke(m)
             }
         }
         override fun onDisconnect(port: WebExtension.Port) {
@@ -34,6 +39,7 @@ object ProxyBridge {
             port.setDelegate(portDelegate)
             configs.values.forEach { port.postMessage(it) }
             scripts?.let { port.postMessage(it) }
+            port.postMessage(JSONObject().put("type", "tools").put("on", Prefs.tools))
         }
     }
 
@@ -63,17 +69,29 @@ object ProxyBridge {
         send(o)
     }
 
-    fun register(w: String, onMapped: (Boolean) -> Unit, onFail: () -> Unit) {
-        mappedCb[w] = onMapped; failCb[w] = onFail
+    fun register(w: String, onMapped: (Boolean) -> Unit, onFail: () -> Unit, onEvent: (JSONObject) -> Unit) {
+        mappedCb[w] = onMapped; failCb[w] = onFail; eventCb[w] = onEvent
     }
 
     fun forget(w: String) {
-        configs.remove(w); mappedCb.remove(w); failCb.remove(w)
+        configs.remove(w); mappedCb.remove(w); failCb.remove(w); eventCb.remove(w)
         send(JSONObject().put("type", "forget").put("w", w))
     }
+
+    fun setTools(on: Boolean) { send(JSONObject().put("type", "tools").put("on", on)) }
 
     fun pushScripts() {
         scripts = ScriptStore.payload()
         send(scripts!!)
     }
+
+    // ---- ferramentas por janela ----
+    fun tool(w: String, cmd: String, on: Boolean) =
+        send(JSONObject().put("type", "tool").put("w", w).put("cmd", cmd).put("on", on))
+
+    fun monitor(w: String, on: Boolean, sel: String = "", every: Int = 60, text: String = "") =
+        send(JSONObject().put("type", "monitor").put("w", w).put("on", on)
+            .put("sel", sel).put("every", every).put("text", text))
+
+    fun autostart(w: String) = send(JSONObject().put("type", "autostart").put("w", w))
 }

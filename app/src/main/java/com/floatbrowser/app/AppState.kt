@@ -35,6 +35,15 @@ object Prefs {
     var bypassVpn: Boolean
         get() = sp.getBoolean("bypassVpn", false)
         set(v) { sp.edit().putBoolean("bypassVpn", v).apply() }
+    var profilesJson: String
+        get() = sp.getString("profiles", "[]") ?: "[]"
+        set(v) { sp.edit().putString("profiles", v).apply() }
+    var schedulesJson: String
+        get() = sp.getString("schedules", "[]") ?: "[]"
+        set(v) { sp.edit().putString("schedules", v).apply() }
+    var tools: Boolean
+        get() = sp.getBoolean("tools", true)
+        set(v) { sp.edit().putBoolean("tools", v).apply() }
     var keepAwake: Boolean
         get() = sp.getBoolean("awake", true)
         set(v) { sp.edit().putBoolean("awake", v).apply() }

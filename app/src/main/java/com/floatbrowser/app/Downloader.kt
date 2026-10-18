@@ -11,8 +11,9 @@ import android.provider.MediaStore
 import android.widget.Toast
 import org.mozilla.geckoview.WebResponse
 import java.io.File
+import java.io.OutputStream
 
-/** Salva downloads na pasta Download do celular (sem permissão especial). */
+/** Salva arquivos na pasta Download do celular (sem permissão especial). */
 object Downloader {
     private fun toast(c: Context, t: String) =
         Handler(Looper.getMainLooper()).post { Toast.makeText(c, t, Toast.LENGTH_LONG).show() }
@@ -24,6 +25,21 @@ object Downloader {
         return n.replace(Regex("""[\\/:*?"<>|]"""), "_")
     }
 
+    private fun write(c: Context, name: String, mime: String?, body: (OutputStream) -> Unit) {
+        if (Build.VERSION.SDK_INT >= 29) {
+            val v = ContentValues().apply {
+                put(MediaStore.Downloads.DISPLAY_NAME, name)
+                put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
+                if (mime != null) put(MediaStore.Downloads.MIME_TYPE, mime)
+            }
+            val uri = c.contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, v)!!
+            c.contentResolver.openOutputStream(uri)!!.use(body)
+        } else {
+            val dir = c.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)!!
+            File(dir, name).outputStream().use(body)
+        }
+    }
+
     fun save(c: Context, r: WebResponse) {
         val body = r.body
         if (body == null) { toast(c, "Download sem conteúdo"); return }
@@ -31,20 +47,18 @@ object Downloader {
         val mime = r.headers.entries.firstOrNull { it.key.equals("content-type", true) }?.value?.substringBefore(";")
         Thread {
             try {
-                if (Build.VERSION.SDK_INT >= 29) {
-                    val v = ContentValues().apply {
-                        put(MediaStore.Downloads.DISPLAY_NAME, name)
-                        put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
-                        if (mime != null) put(MediaStore.Downloads.MIME_TYPE, mime)
-                    }
-                    val uri = c.contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, v)!!
-                    c.contentResolver.openOutputStream(uri)!!.use { o -> body.use { it.copyTo(o) } }
-                } else {
-                    val dir = c.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)!!
-                    File(dir, name).outputStream().use { o -> body.use { it.copyTo(o) } }
-                }
+                write(c, name, mime) { o -> body.use { it.copyTo(o) } }
                 toast(c, "Baixado em Downloads: $name")
             } catch (e: Exception) { toast(c, "Falha no download") }
+        }.start()
+    }
+
+    fun saveBytes(c: Context, name: String, bytes: ByteArray, mime: String?) {
+        Thread {
+            try {
+                write(c, name, mime) { it.write(bytes) }
+                toast(c, "Salvo em Downloads: $name")
+            } catch (e: Exception) { toast(c, "Falha ao salvar o arquivo") }
         }.start()
     }
 }

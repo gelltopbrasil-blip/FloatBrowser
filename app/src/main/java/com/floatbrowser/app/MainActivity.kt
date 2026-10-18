@@ -88,6 +88,16 @@ class MainActivity : Activity() {
             status.text = if (Prefs.bypassVpn) "Só este app ignora o VPN agora" else "Este app volta a usar o VPN"
         }
         col.addView(vpnBtn)
+        val toolsBtn = Button(this)
+        fun toolsText() {
+            toolsBtn.text = "Ferramentas 🛠 nas páginas (seletor, gravador, CSV): " + if (Prefs.tools) "SIM" else "NÃO"
+        }
+        toolsText()
+        toolsBtn.setOnClickListener {
+            Prefs.tools = !Prefs.tools; toolsText(); ProxyBridge.setTools(Prefs.tools)
+            status.text = "Vale nas próximas páginas carregadas"
+        }
+        col.addView(toolsBtn)
         btn("Atualizar proxys agora") { refreshProxies(true) }
         btn("Proxys manuais") {
             editDialog("Um por linha: ip:porta ou usuario:senha@ip:porta", Prefs.manualText) {
