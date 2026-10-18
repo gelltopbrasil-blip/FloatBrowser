@@ -69,7 +69,7 @@ object ProxyBridge {
         send(o)
     }
 
-    fun register(w: String, onMapped: (Boolean) -> Unit, onFail: () -> Unit, onEvent: (JSONObject) -> Unit) {
+    fun register(w: String, onMapped: (Boolean) -> Unit, onFail: () -> Unit, onEvent: (JSONObject) -> Unit = {}) {
         mappedCb[w] = onMapped; failCb[w] = onFail; eventCb[w] = onEvent
     }
 
