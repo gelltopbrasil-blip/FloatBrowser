@@ -265,7 +265,31 @@ class FloatWindow(
             }
         }
 
+        // fileira de teclas da janela: navegação + mecânicas do projeto
+        val keys = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setBackgroundColor(0xFF263238.toInt())
+            setPadding(px(2), px(2), px(2), px(2))
+        }
+        fun key(t: String, a: () -> Unit) {
+            keys.addView(TextView(ctx).apply {
+                text = t; textSize = 15f; setTextColor(Color.WHITE); gravity = Gravity.CENTER
+                setBackgroundColor(0xFF37474F.toInt())
+                setPadding(0, px(6), 0, px(6))
+                setOnClickListener { a() }
+            }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+                setMargins(px(1), 0, px(1), 0)
+            })
+        }
+        key("◀") { session.goBack() }                       // voltar no site
+        key("▶") { session.goForward() }                    // avançar
+        key("⟳") { session.reload() }                       // recarregar
+        key("🔀") { swapProxy() }                            // trocar de proxy (novo IP)
+        key("🌐") { session.loadUri("https://api.ipify.org") } // mostrar o IP de saída desta janela
+        key("🛠") { toggleTools() }                          // ferramentas nas páginas: ligar/desligar
+
         content.addView(banner)
+        content.addView(keys)
         content.addView(url)
         content.addView(gv, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
         content.addView(handle, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
@@ -378,6 +402,24 @@ class FloatWindow(
         if (direct) pool.release(id)
         applyConfig()
         session.reload()
+    }
+
+    /** Botão 🔀: descarta o proxy atual (quarentena) e testa outros para dar um novo IP. */
+    private fun swapProxy() {
+        if (direct) {
+            Toast.makeText(svc, "Janela em IP real. Segure o ícone da barra para voltar ao proxy.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        lastFail = 0L
+        handleFail()
+    }
+
+    /** Botão 🛠: liga/desliga as ferramentas dentro das páginas (valem nas próximas páginas). */
+    private fun toggleTools() {
+        Prefs.tools = !Prefs.tools
+        ProxyBridge.setTools(Prefs.tools)
+        Toast.makeText(svc, "Ferramentas 🛠 " + (if (Prefs.tools) "ligadas" else "desligadas") +
+            " (valem nas próximas páginas)", Toast.LENGTH_SHORT).show()
     }
 
     /** Resposta ao aviso "Sem proxy válido": liberar o IP real nesta janela. */

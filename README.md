@@ -4,6 +4,10 @@ Navegador Android com janelas flutuantes (GeckoView). Cada janela tem cookies is
 proxy (lista gratuita, manual ou IP real), com troca automática quando o proxy cai, ferramentas de
 página (seletor 🎯, gravador, CSV, monitor) e scripts de automação.
 
+## Teclas da janela
+Cada janela tem uma fileira de teclas: ◀ voltar · ▶ avançar · ⟳ recarregar · 🔀 trocar proxy (novo IP) · 🌐 mostrar o IP de saída · 🛠 ligar/desligar as ferramentas das páginas.
+O IP real continua só no toque longo do ícone da barra, para evitar toque acidental.
+
 ## Compilar
 ```
 gradle wrapper --gradle-version 8.7   # uma vez; gera ./gradlew (commite os arquivos gerados)
