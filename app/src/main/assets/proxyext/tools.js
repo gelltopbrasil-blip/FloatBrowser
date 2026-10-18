@@ -372,6 +372,19 @@ function __fbEngine(PASSOS, REPETIR, PAUSA, AUTO) {
     setTimeout(() => location.reload(), 800);
   };
 
+  // ---------- teclas da janela (app) acionam as ferramentas daqui ----------
+  try {
+    const pp = browser.runtime.connect({ name: "page" });
+    pp.onMessage.addListener((m) => {
+      if (!m || m.cmd !== "ui") return;
+      openPanel();
+      if (m.tool === "pick") setMode(mode === "pick" ? "idle" : "pick");
+      else if (m.tool === "extract") setMode(mode === "extract" ? "idle" : "extract");
+      else if (m.tool === "rec") { if (!recording) startRec(); else stopRec(); }
+      else if (m.tool === "mon") bmon.onclick();
+    });
+  } catch (e) {}
+
   // retoma gravação ao trocar de página
   const st = await recGet();
   if (st && st.on) {

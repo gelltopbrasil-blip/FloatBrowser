@@ -79,6 +79,7 @@ class FloatWindow(
     private var recoverCount = 0
     private var monitoring = false
     private var monKey: TextView? = null
+    private var toolsKey: TextView? = null
     private var recoverSince = 0L
 
     private val barH = px(40)
@@ -276,31 +277,38 @@ class FloatWindow(
             }
         }
 
-        // fileira de teclas da janela: navegação + mecânicas do projeto
+        // teclas da janela: linha 1 = navegação/proxy, linha 2 = ferramentas do projeto
         val keys = LinearLayout(ctx).apply {
-            orientation = LinearLayout.HORIZONTAL
+            orientation = LinearLayout.VERTICAL
             setBackgroundColor(0xFF263238.toInt())
             setPadding(px(2), px(2), px(2), px(2))
         }
-        fun key(t: String, a: () -> Unit): TextView {
+        val row1 = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL }
+        val row2 = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL }
+        keys.addView(row1); keys.addView(row2)
+        fun key(row: LinearLayout, t: String, a: () -> Unit): TextView {
             val v = TextView(ctx).apply {
                 text = t; textSize = 14f; setTextColor(Color.WHITE); gravity = Gravity.CENTER
                 setBackgroundColor(0xFF37474F.toInt())
                 setPadding(0, px(6), 0, px(6))
                 setOnClickListener { a() }
             }
-            keys.addView(v, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
-                setMargins(px(1), 0, px(1), 0)
+            row.addView(v, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+                setMargins(px(1), px(1), px(1), px(1))
             })
             return v
         }
-        key("◀") { session.goBack() }                       // voltar no site
-        key("▶") { session.goForward() }                    // avançar
-        key("⟳") { session.reload() }                       // recarregar
-        key("🔀") { swapProxy() }                            // trocar de proxy (novo IP)
-        key("🌐") { session.loadUri("https://api.ipify.org") } // mostrar o IP de saída desta janela
-        key("🛠") { toggleTools() }                          // ferramentas nas páginas: ligar/desligar
-        monKey = key("👁") { monitorKey() }                  // monitor de página: parar / como usar
+        key(row1, "◀") { session.goBack() }                       // voltar no site
+        key(row1, "▶") { session.goForward() }                    // avançar
+        key(row1, "⟳") { session.reload() }                       // recarregar
+        key(row1, "🔀") { swapProxy() }                            // trocar de proxy (novo IP)
+        key(row1, "🌐") { session.loadUri("https://api.ipify.org") } // mostrar o IP de saída desta janela
+        key(row2, "🎯") { toolKey("pick") }                       // seletor: toque num elemento e veja o CSS
+        key(row2, "⏺") { toolKey("rec") }                        // gravador de passos (toque de novo para parar e salvar)
+        key(row2, "📊") { toolKey("extract") }                    // extrair uma lista para CSV
+        monKey = key(row2, "👁") { monitorKey() }                 // monitor de página (verde = ligado; toque para parar)
+        toolsKey = key(row2, "🛠") { toggleTools() }              // ferramentas nas páginas: ligar/desligar (azul = ligadas)
+        paintTools()
 
         content.addView(banner)
         content.addView(keys)
@@ -443,14 +451,28 @@ class FloatWindow(
     private fun toggleTools() {
         Prefs.tools = !Prefs.tools
         ProxyBridge.setTools(Prefs.tools)
+        paintTools()
         Toast.makeText(svc, "Ferramentas 🛠 " + (if (Prefs.tools) "ligadas" else "desligadas") +
-            " (valem nas próximas páginas)", Toast.LENGTH_SHORT).show()
+            " (recarregando a página)", Toast.LENGTH_SHORT).show()
+        handler.postDelayed({ session.reload() }, 400)   // dá tempo da extensão receber o novo estado
     }
 
-    /** Botão 👁: se há monitor ligado, desliga; senão explica como ligar (🛠 → 🎯 → 👁). */
+    private fun paintTools() {
+        toolsKey?.setBackgroundColor(if (Prefs.tools) 0xFF1565C0.toInt() else 0xFF37474F.toInt())
+    }
+
+    /** Teclas 🎯 ⏺ 📊 👁: acionam a ferramenta dentro da página desta janela. */
+    private fun toolKey(tool: String) {
+        if (!Prefs.tools) {
+            Toast.makeText(svc, "Ferramentas desligadas: toque em 🛠 para ligar", Toast.LENGTH_SHORT).show()
+            return
+        }
+        ProxyBridge.ui(id, tool)
+    }
+
+    /** Tecla 👁: com monitor ligado, desliga; senão cria o monitor do elemento escolhido com 🎯. */
     private fun monitorKey() {
-        if (monitoring) ProxyBridge.monitor(id, false)
-        else Toast.makeText(svc, "Monitor: toque em 🛠, escolha o elemento com 🎯 e use 👁 Monitorar", Toast.LENGTH_LONG).show()
+        if (monitoring) ProxyBridge.monitor(id, false) else toolKey("mon")
     }
 
     /** Eventos da extensão para esta janela: aviso de mudança, mensagens e estado do monitor. */

@@ -66,6 +66,7 @@ port.onMessage.addListener(async m => {
     toPages(m.w, stateOf(m.w));
     monState(m.w);
   } else if (m.type === "autostart") { T(m.w).autostart = true; }
+  else if (m.type === "ui") toPages(m.w, { cmd: "ui", tool: m.tool });   // teclas da janela acionam as ferramentas da página
 });
 
 // ---------- páginas (content.js) ----------

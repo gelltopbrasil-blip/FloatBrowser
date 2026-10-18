@@ -93,5 +93,8 @@ object ProxyBridge {
         send(JSONObject().put("type", "monitor").put("w", w).put("on", on)
             .put("sel", sel).put("every", every).put("text", text))
 
+    /** Teclas da janela: aciona uma ferramenta (pick, rec, extract, mon) dentro da página da janela. */
+    fun ui(w: String, tool: String) = send(JSONObject().put("type", "ui").put("w", w).put("tool", tool))
+
     fun autostart(w: String) = send(JSONObject().put("type", "autostart").put("w", w))
 }
