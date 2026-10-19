@@ -6,7 +6,7 @@ página (seletor 🎯, gravador, CSV, monitor) e scripts de automação.
 
 ## Teclas da janela
 Cada janela tem duas fileiras de teclas.
-Linha 1: ◀ voltar · ▶ avançar · ⟳ recarregar · 🔀 trocar proxy (novo IP) · 🌐 mostrar o IP de saída.
+Linha 1: ◀ voltar · ▶ avançar · ⟳ recarregar · 🔀 trocar proxy (novo IP, sem gastar o atual: se não houver outro livre, ele continua) · 🌐 mostrar o IP de saída.
 Linha 2 (ferramentas, agem na página da própria janela): 🎯 seletor CSS · ⏺ gravador de passos (toque de novo para parar e salvar) · 📊 extrair lista para CSV · 👁 monitor (verde = ligado) · 🛠 liga/desliga as ferramentas (azul = ligadas; recarrega a página).
 O IP real continua só no toque longo do ícone da barra, para evitar toque acidental.
 

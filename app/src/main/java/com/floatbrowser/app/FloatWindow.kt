@@ -444,14 +444,28 @@ class FloatWindow(
     /** Usado pelo agendador: recarrega a página do perfil (scripts com INICIAR_AUTOMATICO rodam de novo). */
     fun reloadPage() { session.reload() }
 
-    /** Botão 🔀: descarta o proxy atual (quarentena) e testa outros para dar um novo IP. */
+    /**
+     * Botão 🔀: busca OUTRO proxy (testado) para dar um novo IP. Não queima o atual: ele não vai para a
+     * quarentena e, se não houver outro livre, continua valendo (trocar à toa não esvazia a lista).
+     */
     private fun swapProxy() {
         if (direct) {
             Toast.makeText(svc, "Janela em IP real. Segure o ícone da barra para voltar ao proxy.", Toast.LENGTH_SHORT).show()
             return
         }
-        lastFail = 0L
-        handleFail()
+        if (failing) return
+        failing = true
+        label.text = "${id.uppercase()} · buscando outro IP…"
+        AppState.scope.launch {
+            val p = pool.nextVerified(id, avoid = pool.current(id)?.ipKey())
+            failing = false
+            applyConfig()
+            if (p != null) session.reload()
+            else {
+                Toast.makeText(svc, "Não há outro proxy livre agora. Mantive o atual.", Toast.LENGTH_SHORT).show()
+                if (pool.needsRefresh()) pool.refresh {}
+            }
+        }
     }
 
     /** Botão 🛠: liga/desliga as ferramentas dentro das páginas (valem nas próximas páginas). */

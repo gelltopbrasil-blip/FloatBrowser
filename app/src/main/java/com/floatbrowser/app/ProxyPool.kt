@@ -178,12 +178,22 @@ class ProxyPool(
         inUse.remove(windowId)?.let { quarantine(it, minutes) }
     }
 
-    /** Troca rápida: testa até 6 candidatos em paralelo e entrega o mais rápido que respondeu. */
-    suspend fun nextVerified(windowId: String): ProxyEntry? = withContext(Dispatchers.IO) {
+    /** Candidatos livres: fora os IPs de outras janelas, o IP a evitar e os em quarentena. */
+    internal fun candidates(windowId: String, avoid: String?, limit: Int): List<ProxyEntry> {
+        val taken = takenExcept(windowId)
+        return (manual + healthy)
+            .filter { it.ipKey() !in taken && it.ipKey() != avoid && !isQuarantined(it) }
+            .take(limit)
+    }
+
+    /**
+     * Troca rápida: testa até 6 candidatos em paralelo e entrega o mais rápido que respondeu.
+     * `avoid` = IP que não deve ser escolhido (troca manual: não repetir o atual). Se nada serve,
+     * devolve null e o proxy que a janela já tinha continua valendo.
+     */
+    suspend fun nextVerified(windowId: String, avoid: String? = null): ProxyEntry? = withContext(Dispatchers.IO) {
         repeat(2) {
-            val taken = takenExcept(windowId)
-            val cands = (manual + healthy)
-                .filter { it.ipKey() !in taken && !isQuarantined(it) }.take(if (Prefs.isEco()) 3 else 6)
+            val cands = candidates(windowId, avoid, if (Prefs.isEco()) 3 else 6)
             if (cands.isEmpty()) return@withContext null
             val res = coroutineScope { cands.map { c -> async { c to test(c, 2500) } }.awaitAll() }
             res.filter { it.second == null }.forEach { quarantine(it.first, 10) }
