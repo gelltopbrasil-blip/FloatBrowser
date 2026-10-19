@@ -22,8 +22,10 @@ para outro proxy da lista (nunca cai no IP real sozinha).
 Tela inicial → **Agendamentos**: escolha um perfil e o horário (`08:30` = todo dia, `30m` ou `2h` = a cada tanto).
 Na hora, o app abre a janela do perfil (site, proxy e cookies próprios) ou, se já estiver aberta, recarrega a página.
 Para o script rodar sozinho, deixe `INICIAR_AUTOMATICO = true` nele. Com agendamentos ativos o app mantém o serviço
-ligado (notificação fixa) e, com "Manter ativo com tela desligada: SIM", o aparelho não dorme. Se você tocar em
-**Parar** na notificação, o agendador só volta quando abrir o app de novo. Não reinicia sozinho após reiniciar o celular.
+ligado (notificação fixa). **Bateria:** com janela aberta e "Manter ativo com tela desligada: SIM", o aparelho fica acordado
+e os agendamentos rodam na hora. **Sem nenhuma janela aberta o aparelho pode dormir**: o agendamento então roda quando ele
+acordar (ao ligar a tela, por exemplo) e pode atrasar. O agendador dorme até o próximo horário em vez de acordar a cada 30 s.
+Se você tocar em **Parar** na notificação, o agendador só volta quando abrir o app de novo. Não reinicia sozinho após reiniciar o celular.
 
 ## Perfis com monitor
 Se você liga o monitor 👁 numa janela de **perfil**, ele fica salvo no perfil (aparece 👁 na lista). Ao abrir o perfil

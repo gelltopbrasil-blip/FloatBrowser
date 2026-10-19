@@ -96,6 +96,32 @@ object Schedules {
         return false
     }
 
+    /** Em quantos ms vence o próximo agendamento ativo (0 = já venceu); null se não há nenhum. */
+    internal fun nextDelay(list: List<Schedule>, now: Long): Long? {
+        var best: Long? = null
+        for (s in list) {
+            if (!s.enabled) continue
+            val spec = s.spec.trim().lowercase()
+            val at: Long? = DAILY.matchEntire(spec)?.let { m ->
+                val c = Calendar.getInstance().apply {
+                    set(Calendar.HOUR_OF_DAY, m.groupValues[1].toInt()); set(Calendar.MINUTE, m.groupValues[2].toInt())
+                    set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
+                }
+                if (c.timeInMillis <= now && s.last >= c.timeInMillis) c.add(Calendar.DAY_OF_YEAR, 1) // já rodou hoje
+                c.timeInMillis
+            } ?: EVERY.matchEntire(spec)?.let { m ->
+                s.last + m.groupValues[1].toLong() * (if (m.groupValues[2] == "h") 60 else 1) * 60_000
+            }
+            if (at != null) {
+                val d = maxOf(0L, at - now)
+                if (best == null || d < best) best = d
+            }
+        }
+        return best
+    }
+
+    fun nextInMs(now: Long): Long? = nextDelay(list(), now)
+
     /** Devolve os agendamentos que venceram e marca como executados. */
     fun due(now: Long): List<Schedule> {
         val out = mutableListOf<Schedule>()

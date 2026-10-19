@@ -44,6 +44,7 @@ class FloatService : Service() {
     private var wakeLock: PowerManager.WakeLock? = null
     private var wifiLock: WifiManager.WifiLock? = null
     private var netDown = false
+    private var schedJob: Job? = null
     private var lastRecover = 0L
     private var screenRx: BroadcastReceiver? = null
     override fun onBind(i: Intent?): IBinder? = null
@@ -69,7 +70,10 @@ class FloatService : Service() {
         instance = this
         ProxyBridge.init(this)
         val rx = object : BroadcastReceiver() {
-            override fun onReceive(c: Context?, i: Intent?) { windows.toList().forEach { it.refreshSurface() } }
+            override fun onReceive(c: Context?, i: Intent?) {
+                windows.toList().forEach { it.refreshSurface() }
+                checkSchedules() // tela ligou: vê na hora se algum agendamento ficou atrasado
+            }
         }
         screenRx = rx
         val f = IntentFilter(Intent.ACTION_SCREEN_ON)
@@ -91,12 +95,23 @@ class FloatService : Service() {
                 saveState()
             }
         }
-        scope.launch {   // agendador: a cada 30 s abre (ou recarrega) os perfis que venceram
+        startScheduler()
+    }
+
+    /** Agendador econômico: dorme até o próximo horário (no máx. 5 min) em vez de acordar a cada 30 s. */
+    private fun startScheduler() {
+        schedJob?.cancel()
+        schedJob = scope.launch {
             while (true) {
-                delay(30_000L)
-                Schedules.due(System.currentTimeMillis()).forEach { runScheduled(it) }
+                val next = Schedules.nextInMs(System.currentTimeMillis())
+                delay(if (next == null) 5 * 60_000L else next.coerceIn(15_000L, 5 * 60_000L))
+                checkSchedules()
             }
         }
+    }
+
+    private fun checkSchedules() {
+        Schedules.due(System.currentTimeMillis()).forEach { runScheduled(it) }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -105,7 +120,7 @@ class FloatService : Service() {
         when (intent?.action) {
             ACTION_NEW -> newWindow()
             ACTION_PROFILE -> intent?.getStringExtra("name")?.let { openProfile(it) }
-            ACTION_SCHED -> {}   // só garante que o serviço (e o agendador) está de pé
+            ACTION_SCHED -> { startScheduler(); checkSchedules() }   // agendamento novo/alterado: recalcula o próximo horário
             ACTION_MIN -> { windows.forEach { it.setMinimized(true) }; saveState() }
             ACTION_SHOW -> { windows.forEach { it.setMinimized(false) }; saveState() }
             ACTION_REAL -> {
@@ -193,7 +208,8 @@ class FloatService : Service() {
     private fun closeAll() { windows.toList().forEach { it.close() } }
 
     fun updateLocks() {
-        val want = Prefs.keepAwake && (windows.isNotEmpty() || Schedules.list().any { it.enabled })
+        // CPU/Wi-Fi acordados só com janela aberta; sem janela o celular pode dormir (economiza bateria)
+        val want = Prefs.keepAwake && windows.isNotEmpty()
         runCatching {
             if (want) {
                 if (wakeLock == null)
