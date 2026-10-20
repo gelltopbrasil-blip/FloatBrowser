@@ -525,6 +525,7 @@ class FloatWindow(
                         (m.optString("old") + " → " + m.optString("new")).take(180))
                 }
                 "info" -> Toast.makeText(svc, m.optString("msg").take(200), Toast.LENGTH_LONG).show()
+                "tap" -> tap(m.optDouble("fx", -1.0), m.optDouble("fy", -1.0))
                 "monstate" -> {
                     monitoring = m.optBoolean("on")
                     monKey?.setBackgroundColor(if (monitoring) 0xFF00796B.toInt() else 0xFF37474F.toInt())
@@ -536,6 +537,24 @@ class FloatWindow(
                 else -> {}
             }
         }
+    }
+
+    /** Toque real (confiável, como um dedo) na área visível da página; fx/fy são frações de 0 a 1. Usado pelo passo {"real": true}. */
+    private fun tap(fx: Double, fy: Double) {
+        val w = gv.width
+        val h = gv.height
+        if (w <= 0 || h <= 0 || !(fx in 0.0..1.0) || !(fy in 0.0..1.0)) return
+        val x = (fx * w).toFloat()
+        val y = (fy * h).toFloat()
+        val t0 = android.os.SystemClock.uptimeMillis()
+        fun send(action: Int, at: Long) {
+            val ev = MotionEvent.obtain(t0, at, action, x, y, 0)
+            ev.source = android.view.InputDevice.SOURCE_TOUCHSCREEN
+            gv.dispatchTouchEvent(ev)
+            ev.recycle()
+        }
+        send(MotionEvent.ACTION_DOWN, t0)
+        handler.postDelayed({ send(MotionEvent.ACTION_UP, android.os.SystemClock.uptimeMillis()) }, 70)
     }
 
     /** Resposta ao aviso "Sem proxy válido": liberar o IP real nesta janela. */

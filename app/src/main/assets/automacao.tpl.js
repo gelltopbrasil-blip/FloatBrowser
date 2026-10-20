@@ -10,6 +10,8 @@
 //   { "esperarElemento": ".classe", "timeout": 15000 }   espera algo aparecer
 //   { "clicar": "button.entrar" }                    clica (seletor CSS)
 //   { "clicar": ".aceitar", "opcional": true }       clica se existir; senão segue
+//   { "clicar": ".botao", "real": true }             toque REAL (como um dedo; passa em anúncios/captchas que ignoram
+//                                                    clique de script). Se não der, faz o clique comum. Funciona com "quadro".
 //   { "digitar": ["input[name=q]", "texto"] }        escreve num campo (ou escolhe numa lista)
 //   { "enter": "input[name=q]" }                     aperta Enter no campo
 //   { "rolar": 600 }                                 rola a página (pixels)
@@ -18,6 +20,13 @@
 //   { "extrair": "tr.linha" }                        guarda o texto de cada elemento (linhas de tabela viram colunas)
 //   { "salvarCsv": "dados.csv" }                     salva o que foi extraído na pasta Download
 //   { "avisar": "terminei" }                         manda uma notificação
+//
+// IFRAMES (anúncios, formulários embutidos): acrescente "quadro" ao passo e ele roda dentro do iframe.
+//   { "clicar": "button.enviar", "quadro": "forms.exemplo.com" }   "quadro" = pedaço do endereço do iframe
+//   { "digitar": ["input[name=email]", "a@b.com"], "quadro": "forms.exemplo.com" }
+//   { "extrair": "li.item", "quadro": "*" }                        "*" = qualquer iframe que tenha o elemento
+//   Vale para: esperarElemento, clicar, digitar, enter, rolar, extrair. Se vários iframes combinarem,
+//   usa o primeiro que tiver o elemento. Para descobrir o seletor E o quadro, use 🎯 e toque dentro do iframe.
 // Dica: use o botão 🎯 da janela para descobrir o seletor de qualquer elemento.
 // Atenção: senha escrita aqui fica visível no arquivo; prefira não guardar senhas importantes.
 
@@ -74,7 +83,69 @@
     el.dispatchEvent(new Event("change", { bubbles: true }));
   }
 
+  // ---------- cliques ----------
+  function fullClick(el) {
+    let r = { left: 0, top: 0, width: 0, height: 0 };
+    try { r = el.getBoundingClientRect(); } catch (e) {}
+    const o = { bubbles: true, cancelable: true, composed: true, button: 0, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2 };
+    try { el.dispatchEvent(new PointerEvent("pointerdown", o)); } catch (e) {}
+    try { el.dispatchEvent(new MouseEvent("mousedown", o)); } catch (e) {}
+    try { el.dispatchEvent(new PointerEvent("pointerup", o)); } catch (e) {}
+    try { el.dispatchEvent(new MouseEvent("mouseup", o)); } catch (e) {}
+    el.click();
+  }
+  // toque REAL (isTrusted = true): o app manda um toque de verdade ao navegador. false = use o clique comum
+  async function realTap(el) {
+    if (typeof browser === "undefined") return false;
+    el.scrollIntoView({ block: "center" });
+    await wait(450);
+    const r = el.getBoundingClientRect(), v = window.visualViewport;
+    const vx = v ? v.offsetLeft : 0, vy = v ? v.offsetTop : 0, vw = v ? v.width : window.innerWidth, vh = v ? v.height : window.innerHeight;
+    const fx = (r.left + r.width / 2 - vx) / vw, fy = (r.top + r.height / 2 - vy) / vh;
+    if (!(fx >= 0 && fx <= 1 && fy >= 0 && fy <= 1)) return false;
+    let ok = false;
+    box.style.pointerEvents = "none";
+    try { ok = await browser.runtime.sendMessage({ cmd: "tap", fx: fx, fy: fy }); } catch (e) {}
+    await wait(500);
+    box.style.pointerEvents = "";
+    return !!ok;
+  }
+
+  // ---------- iframes: passo com "quadro" roda dentro do iframe ----------
+  const selOf = (p) => p.esperarElemento || p.clicar || p.enter || p.extrair || (p.digitar && p.digitar[0]) || "";
+  async function inFrame(p) {
+    if (typeof browser === "undefined") throw new Error("quadros só funcionam dentro do app");
+    const sel = selOf(p), limit = p.timeout || (p.esperarElemento ? 10000 : 8000), t0 = Date.now();
+    let r = null;
+    for (;;) {
+      try { r = await browser.runtime.sendMessage({ cmd: "frameFind", quadro: p.quadro, sel: sel }); } catch (e) { r = null; }
+      if (r && r.frameId != null) break;
+      if (Date.now() - t0 >= limit) {
+        if (p.opcional) return null;
+        throw new Error('não achei no quadro "' + p.quadro + '": ' + (sel || "(quadro)"));
+      }
+      await wait(250);
+    }
+    let res = null;
+    try { res = await browser.runtime.sendMessage({ cmd: "frameRun", frameId: r.frameId, step: p }); } catch (e) {}
+    if (!res || !res.ok) { if (p.opcional) return null; throw new Error((res && res.error) || "falha no quadro"); }
+    return res;
+  }
+
   async function exec(p) {
+    if (p.quadro && (p.esperarElemento || p.clicar || p.digitar || p.enter || p.extrair || p.rolar !== undefined)) {
+      const fr = await inFrame(p);
+      if (p.clicar && fr && fr.fx != null) {   // toque real no iframe: o quadro mandou onde tocar
+        try { await browser.runtime.sendMessage({ cmd: "tap", fx: fr.fx, fy: fr.fy }); } catch (e) {}
+        await wait(500);
+      }
+      if (p.extrair && fr) {
+        const rows = (fr.items || []).map((it) => (it.c && it.c.length ? it.c : [it.t]));
+        let buf = []; try { buf = JSON.parse(localStorage.getItem(ROWS)) || []; } catch (e) {}
+        try { localStorage.setItem(ROWS, JSON.stringify(buf.concat(rows))); } catch (e) {}
+      }
+      return;
+    }
     if (p.esperar) return wait(p.esperar);
     if (p.esperarElemento) {
       const el = await waitFor(p.esperarElemento, p.timeout || 10000);
@@ -84,9 +155,10 @@
     if (p.clicar) {
       const el = await waitFor(p.clicar, p.timeout || 8000);
       if (!el) { if (p.opcional) return; throw new Error("não achei: " + p.clicar); }
+      if (p.real && await realTap(el)) return;
       el.scrollIntoView({ block: "center" });
       await wait(150);
-      el.click();
+      fullClick(el);
       return;
     }
     if (p.digitar) {

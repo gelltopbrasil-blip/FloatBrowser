@@ -51,13 +51,19 @@ object ScriptStore {
         return 1
     }
 
+    private val framesRx = Regex("""(?m)^\s*//\s*@frames\b""")
+
+    /** Linha `// @frames` no cabeçalho: o script também roda dentro dos iframes (anúncios, formulários embutidos). */
+    fun wantsFrames(code: String): Boolean = framesRx.containsMatchIn(code)
+
     fun payload(): JSONObject {
         val arr = JSONArray()
         val rx = Regex("""(?m)^\s*//\s*@match\s+(\S+)""")
         list().filter { enabled(it) }.forEach { n ->
             val code = File(dir, n).readText()
             val m = rx.findAll(code).map { it.groupValues[1] }.toList().ifEmpty { listOf("<all_urls>") }
-            arr.put(JSONObject().put("name", n).put("matches", JSONArray(m)).put("code", code))
+            arr.put(JSONObject().put("name", n).put("matches", JSONArray(m)).put("code", code)
+                .put("allFrames", wantsFrames(code)))
         }
         return JSONObject().put("type", "scripts").put("list", arr)
     }

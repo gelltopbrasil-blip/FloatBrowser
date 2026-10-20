@@ -12,6 +12,23 @@ O IP real continua só no toque longo do ícone da barra, para evitar toque acid
 
 **Monitor:** toque em 🎯 e escolha o elemento (preço, texto) → ajuste os segundos (mín. 30) e, se quiser, o texto a procurar no painel → toque em 👁. A janela recarrega a página no intervalo e avisa por notificação quando o valor muda (ou quando o texto aparece). Vale enquanto a janela estiver aberta.
 
+## Iframes (anúncios, formulários embutidos)
+As ferramentas e a automação também alcançam o que está **dentro de iframes** (inclusive de outros sites).
+- **🎯 Seletor, 📊 Extrair, ⏺ Gravador e 👁 Monitor**: com o painel aberto, toque direto no elemento dentro do iframe.
+  O painel mostra o seletor e o **quadro** (pedaço do endereço do iframe); **Copiar** leva o passo pronto, ex.:
+  `{"clicar":"button.enviar","quadro":"forms.exemplo.com"}`. O gravador já grava o `quadro` sozinho.
+- **Passos de automação**: acrescente `"quadro"` ao passo (`esperarElemento`, `clicar`, `digitar`, `selecionar`, `enter`, `rolar`, `extrair`).
+  `"quadro": "forms.exemplo.com"` = iframe cujo endereço contém esse texto; `"quadro": "*"` = qualquer iframe. Se vários combinarem,
+  vale o primeiro que tiver o elemento. Iframes sem endereço (`about:blank`, `srcdoc`) usam o próprio texto como quadro.
+  Sem `"quadro"` o passo continua rodando só na página principal (o painel ▶/⏹ também fica só nela).
+- **Scripts próprios**: coloque `// @frames` no cabeçalho para o script rodar em todos os iframes que casarem com `@match`
+  (nesse caso cada iframe executa o script por conta própria; o template de automação e as gravações continuam só na página principal).
+- **Toque real** (anúncios/captchas que ignoram clique de script): use `{"clicar":"...","real":true}` (com ou sem `"quadro"`).
+  O app manda um toque de verdade ao navegador, como um dedo. Se não der (elemento fora da tela, iframe sem resposta, janela
+  minimizada), o passo faz o clique comum e segue, sem erro. O clique comum também dispara pointerdown/mousedown/pointerup/mouseup.
+  Obs.: a janela precisa estar visível; serviços de captcha podem barrar automação mesmo com toque real.
+- Ao atualizar o app a extensão interna sobe para a versão 1.3 (iframes e toque real só funcionam com ela).
+
 ## Perfis
 Tela inicial → **Perfis**: crie um perfil com nome, site inicial e proxy (`auto`, `direto` ou `ip:porta`).
 Cada perfil tem seus **próprios cookies** (guardados pelo nome; não renomeie) e abre numa janela com a

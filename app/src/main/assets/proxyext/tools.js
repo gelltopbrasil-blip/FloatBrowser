@@ -41,8 +41,74 @@ function __fbEngine(PASSOS, REPETIR, PAUSA, AUTO) {
     el.dispatchEvent(new Event("change", { bubbles: true }));
   }
 
+  // ---------- cliques ----------
+  // clique comum, com a sequência completa de eventos (alguns sites só ouvem pointerdown/mousedown)
+  function fullClick(el) {
+    var r = { left: 0, top: 0, width: 0, height: 0 };
+    try { r = el.getBoundingClientRect(); } catch (e) {}
+    var o = { bubbles: true, cancelable: true, composed: true, button: 0, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2 };
+    try { el.dispatchEvent(new PointerEvent("pointerdown", o)); } catch (e) {}
+    try { el.dispatchEvent(new MouseEvent("mousedown", o)); } catch (e) {}
+    try { el.dispatchEvent(new PointerEvent("pointerup", o)); } catch (e) {}
+    try { el.dispatchEvent(new MouseEvent("mouseup", o)); } catch (e) {}
+    el.click();
+  }
+  // toque REAL: o app manda um toque de verdade ao navegador (isTrusted = true), como um dedo.
+  // Devolve false (e o chamador faz o clique comum) se algo não estiver disponível.
+  async function realTap(el) {
+    if (typeof browser === "undefined") return false;
+    el.scrollIntoView({ block: "center" });
+    await wait(450);
+    var r = el.getBoundingClientRect(), v = window.visualViewport;
+    var vx = v ? v.offsetLeft : 0, vy = v ? v.offsetTop : 0, vw = v ? v.width : window.innerWidth, vh = v ? v.height : window.innerHeight;
+    var fx = (r.left + r.width / 2 - vx) / vw, fy = (r.top + r.height / 2 - vy) / vh;
+    if (!(fx >= 0 && fx <= 1 && fy >= 0 && fy <= 1)) return false;
+    var ok = false;
+    box.style.pointerEvents = "none";
+    try { ok = await browser.runtime.sendMessage({ cmd: "tap", fx: fx, fy: fy }); } catch (e) {}
+    await wait(500);
+    box.style.pointerEvents = "";
+    return !!ok;
+  }
+
+  // ---------- quadros (iframes): passo com "quadro" roda dentro do iframe ----------
+  function selOf(p) {
+    return p.esperarElemento || p.clicar || p.extrair || (p.digitar && p.digitar[0]) || (p.selecionar && p.selecionar[0]) || "";
+  }
+  async function inFrame(p) {
+    if (typeof browser === "undefined") throw new Error("quadros só funcionam dentro do app");
+    var sel = selOf(p), limit = p.timeout || (p.esperarElemento ? 10000 : 8000), t0 = Date.now(), r = null;
+    for (;;) {
+      try { r = await browser.runtime.sendMessage({ cmd: "frameFind", quadro: p.quadro, sel: sel }); } catch (e) { r = null; }
+      if (r && r.frameId != null) break;
+      if (Date.now() - t0 >= limit) {
+        if (p.opcional) return null;
+        throw new Error('não achei no quadro "' + p.quadro + '": ' + (sel || "(quadro)"));
+      }
+      await wait(250);
+    }
+    var res = null;
+    try { res = await browser.runtime.sendMessage({ cmd: "frameRun", frameId: r.frameId, step: p }); } catch (e) {}
+    if (!res || !res.ok) { if (p.opcional) return null; throw new Error((res && res.error) || "falha no quadro"); }
+    return res;
+  }
+
   // ---------- passos ----------
   async function exec(p) {
+    if (p.quadro && (p.esperarElemento || p.clicar || p.digitar || p.selecionar || p.extrair || p.rolar !== undefined)) {
+      var fr = await inFrame(p);
+      if (p.clicar && fr && fr.fx != null) {   // toque real no iframe: o quadro mandou onde tocar
+        try { await browser.runtime.sendMessage({ cmd: "tap", fx: fr.fx, fy: fr.fy }); } catch (e) {}
+        await wait(500);
+      }
+      if (p.extrair && fr) {
+        var its = fr.items || [];
+        var rowsF = [["texto", "link"]].concat(its.map(function (it) { return [it.t, it.a]; }));
+        browser.runtime.sendMessage({ cmd: "csv", name: p.arquivo || "dados", text: csv(rowsF) });
+        log(its.length + " itens salvos em Downloads");
+      }
+      return;
+    }
     if (p.esperar) return wait(p.esperar);
     if (p.esperarElemento) {
       var e1 = await waitFor(p.esperarElemento, p.timeout || 10000);
@@ -52,9 +118,10 @@ function __fbEngine(PASSOS, REPETIR, PAUSA, AUTO) {
     if (p.clicar) {
       var e2 = await waitFor(p.clicar, p.timeout || 8000);
       if (!e2) { if (p.opcional) return; throw new Error("não achei: " + p.clicar); }
+      if (p.real && await realTap(e2)) return;
       e2.scrollIntoView({ block: "center" });
       await wait(150);
-      e2.click();
+      fullClick(e2);
       return;
     }
     if (p.digitar) {
@@ -119,22 +186,14 @@ function __fbEngine(PASSOS, REPETIR, PAUSA, AUTO) {
   else { btn.textContent = "▶ Iniciar"; if (AUTO) start(); }
 }
 
-/* FloatBrowser · Ferramentas (🛠): seletor, gravador de passos e exportar CSV */
-(async function () {
-  if (window.top !== window) return;
-  var on = false;
-  try { on = await browser.runtime.sendMessage({ cmd: "toolsOn" }); } catch (e) { return; }
-  if (!on) return;
-
-  const post = (m) => { try { browser.runtime.sendMessage(m); } catch (e) {} };
+/* FloatBrowser · Seletor CSS e destaque, compartilhados pelo quadro principal e pelos iframes */
+var FB = (function () {
   const esc = (typeof CSS !== "undefined" && CSS.escape) ? CSS.escape.bind(CSS) : (s) => String(s).replace(/[^\w-]/g, "\\$&");
   const q = (s) => { try { return document.querySelectorAll(s).length; } catch (e) { return 0; } };
   const okClass = (c) => c.length < 30 && !/\d{3,}/.test(c);
   const clean = (t) => String(t || "").replace(/\s+/g, " ").trim();
   const linkOf = (e) => { const a = (e.closest && e.closest("a")) || e.querySelector("a"); return a ? a.href : ""; };
-  const toCsv = (rows) => rows.map((r) => r.map((c) => '"' + String(c).replace(/"/g, '""') + '"').join(";")).join("\r\n");
 
-  // ---------- seletor CSS ----------
   function cssPath(el) {
     const tag = el.tagName.toLowerCase();
     if (el.id && !/\d{4,}/.test(el.id)) { const s = "#" + esc(el.id); if (q(s) === 1) return s; }
@@ -186,6 +245,65 @@ function __fbEngine(PASSOS, REPETIR, PAUSA, AUTO) {
   const clearMarks = () => { marks.forEach((m) => { m[0].style.outline = m[1]; }); marks = []; };
   const mark = (els) => { clearMarks(); els.forEach((e) => { marks.push([e, e.style.outline]); e.style.outline = "3px solid #ff9800"; }); };
 
+  return { esc: esc, q: q, clean: clean, linkOf: linkOf, cssPath: cssPath, generalSel: generalSel, mark: mark, clearMarks: clearMarks };
+})();
+
+/* FloatBrowser · Medidor de quadros: descobre onde um elemento de um iframe está na tela (toque real) */
+var FBG = (function () {
+  var reqs = {};
+  function vvInfo() {
+    var v = window.visualViewport;
+    return v ? { ox: v.offsetLeft, oy: v.offsetTop, w: v.width, h: v.height } : { ox: 0, oy: 0, w: window.innerWidth, h: window.innerHeight };
+  }
+  function offsetOf(win) {   // onde está, neste quadro, o iframe cuja janela é `win`
+    var list = document.querySelectorAll("iframe,frame");
+    for (var i = 0; i < list.length; i++) {
+      var f = list[i];
+      if (f.contentWindow === win) {
+        var r = f.getBoundingClientRect();
+        return { x: r.left + f.clientLeft, y: r.top + f.clientTop,
+          sx: f.offsetWidth ? r.width / f.offsetWidth : 1, sy: f.offsetHeight ? r.height / f.offsetHeight : 1 };
+      }
+    }
+    return null;
+  }
+  // transformação do viewport DESTE quadro para a área visível da página principal; cb(null) se não der
+  function chain(cb) {
+    if (window.top === window) { cb({ ax: 0, ay: 0, sx: 1, sy: 1, vv: vvInfo() }); return; }
+    var id = String(Math.random()), done = false;
+    var fin = function (t) { if (done) return; done = true; delete reqs[id]; cb(t); };
+    reqs[id] = fin;
+    setTimeout(function () { fin(null); }, 1000);
+    try { window.parent.postMessage({ __fb: 1, op: "off", id: id }, "*"); } catch (e) { fin(null); }
+  }
+  window.addEventListener("message", function (e) {
+    var d = e.data;
+    if (!d || d.__fb !== 1 || !d.id) return;
+    if (d.op === "off" && e.source && e.source !== window) {
+      var src = e.source;
+      var reply = function (v) { try { src.postMessage({ __fb: 1, op: "offr", id: d.id, t: v }, "*"); } catch (x) {} };
+      var o = offsetOf(src);
+      if (!o) { reply(null); return; }
+      chain(function (t) {
+        if (!t) { reply(null); return; }
+        reply({ ax: t.ax + o.x * t.sx, ay: t.ay + o.y * t.sy, sx: o.sx * t.sx, sy: o.sy * t.sy, vv: t.vv });
+      });
+    } else if (d.op === "offr" && reqs[d.id]) reqs[d.id](d.t || null);
+  });
+  return { chain: chain };
+})();
+
+/* FloatBrowser · Ferramentas (🛠): seletor, gravador de passos e exportar CSV */
+(async function () {
+  if (window.top !== window) return;
+  var on = false;
+  try { on = await browser.runtime.sendMessage({ cmd: "toolsOn" }); } catch (e) { return; }
+  if (!on) return;
+
+  const post = (m) => { try { browser.runtime.sendMessage(m); } catch (e) {} };
+  const { q, clean, linkOf, cssPath, generalSel, mark, clearMarks } = FB;
+  const toCsv = (rows) => rows.map((r) => r.map((c) => '"' + String(c).replace(/"/g, '""') + '"').join(";")).join("\r\n");
+
   // ---------- painel (estilos por JS: não dependem do CSP do site) ----------
   const h = (tag, css, txt) => { const e = document.createElement(tag); if (css) e.style.cssText = css; if (txt) e.textContent = txt; return e; };
   const BTN = "font:13px sans-serif;padding:8px 10px;margin:2px;border:0;border-radius:6px;background:#455a64;color:#fff;";
@@ -210,7 +328,9 @@ function __fbEngine(PASSOS, REPETIR, PAUSA, AUTO) {
   sh.appendChild(handle); sh.appendChild(panel);
   document.documentElement.appendChild(host);
 
-  let mode = "idle", cur = null, lastText = "", extRows = [], recording = false, recState = null;
+  let mode = "idle", cur = null, curSel = "", curQuadro = "", lastText = "", extRows = [], recording = false, recState = null;
+  // avisa os iframes do modo atual (seletor/extrair/gravar): eles passam a capturar toques e gravar também
+  const syncFrames = () => post({ cmd: "fstate", mode: mode, recording: recording });
   const inPanel = (e) => e.composedPath && e.composedPath().indexOf(host) >= 0;
   const openPanel = () => { panel.style.display = "block"; handle.style.display = "none"; };
   const closePanel = () => { setMode("idle"); panel.style.display = "none"; handle.style.display = "block"; };
@@ -225,7 +345,8 @@ function __fbEngine(PASSOS, REPETIR, PAUSA, AUTO) {
     else bsave.style.display = "none";
   }
   function setMode(m) {
-    mode = m; clearMarks(); cur = null;
+    mode = m; clearMarks(); cur = null; curSel = ""; curQuadro = "";
+    syncFrames();
     if (m === "pick") out.value = "Toque em qualquer elemento da página para ver o seletor.";
     else if (m === "extract") out.value = "Toque em UM item da lista (ex.: um título ou preço). Eu pego todos os parecidos.";
     refreshButtons();
@@ -242,10 +363,10 @@ function __fbEngine(PASSOS, REPETIR, PAUSA, AUTO) {
     .forEach((t) => window.addEventListener(t, block, true));
 
   function onPick(el) {
-    cur = el;
+    cur = el; curQuadro = ""; post({ cmd: "fclear" });
     if (mode === "pick") {
       const s = cssPath(el);
-      lastText = s; mark([el]);
+      curSel = s; lastText = s; mark([el]);
       out.value = s + "\n\n" + q(s) + " elemento(s) · toque em Copiar";
     } else if (mode === "extract") {
       const s = generalSel(el);
@@ -258,11 +379,32 @@ function __fbEngine(PASSOS, REPETIR, PAUSA, AUTO) {
     }
   }
 
+  // toque feito dentro de um iframe: o quadro mandou o seletor e o endereço (quadro) dele
+  function onFramePick(d, fid) {
+    clearMarks(); cur = null;
+    post({ cmd: "fclear", keep: fid });
+    if (!d || d.mode !== mode) return;
+    curSel = d.sel; curQuadro = d.quadro;
+    if (d.mode === "pick") {
+      lastText = JSON.stringify({ clicar: d.sel, quadro: d.quadro });
+      out.value = d.sel + "\n\nquadro: " + d.quadro + " · " + d.n + " elemento(s)\nCopiar leva o passo pronto, já com \"quadro\".";
+    } else {
+      extRows = [["texto", "link"]].concat(d.rows || []);
+      lastText = JSON.stringify({ extrair: d.sel, quadro: d.quadro });
+      out.value = d.sel + "\nquadro: " + d.quadro + " · " + (d.rows || []).length + " item(ns). Se pegou demais ou de menos, use ↑ Pai.\n\n" +
+        extRows.slice(1, 4).map((r) => r.join(" | ")).join("\n");
+    }
+  }
+
   // ---------- gravador ----------
   const recGet = async () => { try { return (await browser.storage.local.get("rec")).rec || null; } catch (e) { return null; } };
   const recPut = () => { try { browser.storage.local.set({ rec: recState }); } catch (e) {} };
 
   function addStep(step) {
+    const last = recState.steps[recState.steps.length - 1];
+    if (step.digitar && last && last.digitar && last.digitar[0] === step.digitar[0] && last.quadro === step.quadro) {
+      last.digitar[1] = step.digitar[1]; recPut(); return;
+    }
     const now = Date.now();
     const gap = now - (recState.t || now);
     if (recState.steps.length && gap > 1500)
@@ -287,10 +429,9 @@ function __fbEngine(PASSOS, REPETIR, PAUSA, AUTO) {
     if (/^(checkbox|radio|file|button|submit|range|color)$/.test(t.type)) return;
     const sel = cssPath(t);
     const val = t.type === "password" ? "SENHA_AQUI" : t.value;
-    const last = recState.steps[recState.steps.length - 1];
-    if (last && last.digitar && last.digitar[0] === sel) { last.digitar[1] = val; recPut(); return; }
     addStep({ digitar: [sel, val] });
   }
+  function onFrameStep(step) { if (recording && recState && step) addStep(step); }
   function onRecChange(e) {
     const t = e.target;
     if (t && t.tagName === "SELECT" && !inPanel(e)) addStep({ selecionar: [cssPath(t), t.value] });
@@ -307,7 +448,7 @@ function __fbEngine(PASSOS, REPETIR, PAUSA, AUTO) {
   }
   async function startRec() {
     recState = { on: true, steps: [], t: 0 };
-    recording = true; recPut(); attachRec(); refreshButtons();
+    recording = true; recPut(); attachRec(); refreshButtons(); syncFrames();
     out.value = "Gravando… faça as ações normalmente.\nQuando terminar: ⏹ Parar e salvar.\nSenhas viram SENHA_AQUI (digite a sua depois, no arquivo).";
   }
   function buildScript(steps) {
@@ -322,7 +463,7 @@ function __fbEngine(PASSOS, REPETIR, PAUSA, AUTO) {
       "})();\n";
   }
   async function stopRec() {
-    detachRec(); recording = false;
+    detachRec(); recording = false; syncFrames();
     const steps = recState ? recState.steps : [];
     recState = null;
     try { await browser.storage.local.remove("rec"); } catch (e) {}
@@ -341,7 +482,10 @@ function __fbEngine(PASSOS, REPETIR, PAUSA, AUTO) {
   bext.onclick = () => setMode(mode === "extract" ? "idle" : "extract");
   brec.onclick = () => { if (!recording) startRec(); };
   bcopy.onclick = () => post({ cmd: "copy", text: lastText || out.value });
-  bup.onclick = () => { if (cur && cur.parentElement && cur.parentElement !== document.documentElement) onPick(cur.parentElement); };
+  bup.onclick = () => {
+    if (curQuadro) { post({ cmd: "fup" }); return; }   // o elemento está num iframe: ele mesmo sobe
+    if (cur && cur.parentElement && cur.parentElement !== document.documentElement) onPick(cur.parentElement);
+  };
   bsave.onclick = () => {
     if (recording) { stopRec(); return; }
     if (mode === "extract" && extRows.length > 1) {
@@ -360,15 +504,15 @@ function __fbEngine(PASSOS, REPETIR, PAUSA, AUTO) {
   refreshMon();
   bmon.onclick = () => {
     if (monOn) { post({ cmd: "monOff" }); monOn = false; refreshMon(); out.value = "Monitor desligado."; return; }
-    if (mode !== "pick" || !cur) {
+    if (mode !== "pick" || !curSel) {
       out.value = "Primeiro toque em 🎯 Seletor e escolha o elemento (preço, texto…) que quer monitorar. Depois toque em 👁.";
       return;
     }
-    const sel = cssPath(cur);
+    const sel = curSel;
     const every = Math.max(30, parseInt(mevery.value, 10) || 60);
-    post({ cmd: "monSet", sel: sel, every: every, text: mtext.value.trim() });
+    post({ cmd: "monSet", sel: sel, quadro: curQuadro, every: every, text: mtext.value.trim() });
     monOn = true; refreshMon();
-    out.value = "Monitorando " + sel + " a cada " + every + " s.\nA página vai recarregar para ler o valor. Você recebe uma notificação quando mudar.";
+    out.value = "Monitorando " + sel + (curQuadro ? " (quadro " + curQuadro + ")" : "") + " a cada " + every + " s.\nA página vai recarregar para ler o valor. Você recebe uma notificação quando mudar.";
     setTimeout(() => location.reload(), 800);
   };
 
@@ -376,7 +520,10 @@ function __fbEngine(PASSOS, REPETIR, PAUSA, AUTO) {
   try {
     const pp = browser.runtime.connect({ name: "page" });
     pp.onMessage.addListener((m) => {
-      if (!m || m.cmd !== "ui") return;
+      if (!m) return;
+      if (m.cmd === "fpick") { onFramePick(m.data, m.frameId); return; }
+      if (m.cmd === "fstep") { if (m.data) onFrameStep(m.data.step); return; }
+      if (m.cmd !== "ui") return;
       openPanel();
       if (m.tool === "pick") setMode(mode === "pick" ? "idle" : "pick");
       else if (m.tool === "extract") setMode(mode === "extract" ? "idle" : "extract");
@@ -391,7 +538,7 @@ function __fbEngine(PASSOS, REPETIR, PAUSA, AUTO) {
     recState = st; recording = true;
     const last = st.steps[st.steps.length - 1];
     if (st.steps.length && !(last && last.esperar)) { st.steps.push({ esperar: 2000 }); recPut(); }
-    attachRec(); openPanel(); refreshButtons();
+    attachRec(); openPanel(); refreshButtons(); syncFrames();
     out.value = "Gravando… " + st.steps.length + " passos";
   }
 })();
@@ -402,16 +549,24 @@ function __fbEngine(PASSOS, REPETIR, PAUSA, AUTO) {
   var cfg = null;
   try { cfg = await browser.runtime.sendMessage({ cmd: "monGet" }); } catch (e) { return; }
   if (!cfg || !cfg.sel) return;
-  var read = function () {
+  var read = async function () {
+    if (cfg.quadro) {   // elemento dentro de um iframe: procura e lê pelo agente do quadro
+      try {
+        var f = await browser.runtime.sendMessage({ cmd: "frameFind", quadro: cfg.quadro, sel: cfg.sel });
+        if (!f || f.frameId == null) return null;
+        var res = await browser.runtime.sendMessage({ cmd: "frameRun", frameId: f.frameId, step: { ler: cfg.sel } });
+        return res && res.ok ? res.value : null;
+      } catch (e) { return null; }
+    }
     try {
       var el = document.querySelector(cfg.sel);
       return el ? String(el.innerText || el.textContent || "").replace(/\s+/g, " ").trim() : null;
     } catch (e) { return null; }
   };
-  var t0 = Date.now(), v = read();
+  var t0 = Date.now(), v = await read();
   while (v === null && Date.now() - t0 < 8000) { // páginas que montam o conteúdo depois
     await new Promise(function (r) { setTimeout(r, 500); });
-    v = read();
+    v = await read();
   }
   try { browser.runtime.sendMessage({ type: "mon", value: v }); } catch (e) {}
   setTimeout(async function () {
@@ -419,4 +574,210 @@ function __fbEngine(PASSOS, REPETIR, PAUSA, AUTO) {
     try { c = await browser.runtime.sendMessage({ cmd: "monGet" }); } catch (e) {}
     if (c && c.sel) location.reload(); // só continua se o monitor ainda estiver ligado
   }, Math.max(30, cfg.every || 60) * 1000);
+})();
+
+/* FloatBrowser · Agente de quadros (iframes): faz dentro do iframe o que o quadro principal pede
+   (passos com "quadro", seletor 🎯, extrair 📊, gravador ⏺ e monitor 👁). Não mostra nenhum painel. */
+(function () {
+  if (window.top === window) return;
+  if (typeof browser === "undefined") return;
+  var port;
+  try { port = browser.runtime.connect({ name: "frame" }); } catch (e) { return; }
+  var send = function (m) { try { port.postMessage(m); } catch (e) {} };
+  var wait = function (ms) { return new Promise(function (r) { setTimeout(r, ms); }); };
+  var clean = FB.clean;
+
+  // pedaço do endereço que identifica este quadro (vai no campo "quadro" dos passos gravados)
+  function quadroKey() { return location.host || location.href.slice(0, 60); }
+  function matches(qd) {
+    if (qd === true || qd === "*" || qd == null || qd === "") return true;
+    return location.href.toLowerCase().indexOf(String(qd).toLowerCase()) >= 0;
+  }
+  function has(sel) {
+    if (!sel) return true;
+    try { return !!document.querySelector(sel); } catch (e) { return false; }
+  }
+  async function waitFor(sel, ms) {
+    var t0 = Date.now();
+    while (Date.now() - t0 < ms) {
+      var el = null;
+      try { el = document.querySelector(sel); } catch (e) {}
+      if (el) return el;
+      await wait(200);
+    }
+    return null;
+  }
+  function setValue(el, text) {
+    var proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype
+      : el instanceof HTMLSelectElement ? HTMLSelectElement.prototype : HTMLInputElement.prototype;
+    var desc = Object.getOwnPropertyDescriptor(proto, "value");
+    if (desc && desc.set) desc.set.call(el, text); else el.value = text;
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+    el.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+  function textOf(el) { return clean(el.innerText || el.textContent); }
+  function fullClick(el) {
+    var r = { left: 0, top: 0, width: 0, height: 0 };
+    try { r = el.getBoundingClientRect(); } catch (e) {}
+    var o = { bubbles: true, cancelable: true, composed: true, button: 0, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2 };
+    try { el.dispatchEvent(new PointerEvent("pointerdown", o)); } catch (e) {}
+    try { el.dispatchEvent(new MouseEvent("mousedown", o)); } catch (e) {}
+    try { el.dispatchEvent(new PointerEvent("pointerup", o)); } catch (e) {}
+    try { el.dispatchEvent(new MouseEvent("mouseup", o)); } catch (e) {}
+    el.click();
+  }
+  // posição do elemento na área visível da página principal (fração 0..1) ou null
+  function tapPoint(el) {
+    return new Promise(function (resolve) {
+      var r = el.getBoundingClientRect(), x = r.left + r.width / 2, y = r.top + r.height / 2;
+      FBG.chain(function (t) {
+        if (!t) { resolve(null); return; }
+        var v = t.vv, fx = (t.ax + x * t.sx - v.ox) / v.w, fy = (t.ay + y * t.sy - v.oy) / v.h;
+        resolve(fx >= 0 && fx <= 1 && fy >= 0 && fy <= 1 ? { fx: fx, fy: fy } : null);
+      });
+    });
+  }
+
+  // ---------- passos pedidos pelo quadro principal ----------
+  // (o quadro já foi escolhido porque o elemento existe nele: a espera aqui é curta)
+  async function runStep(p) {
+    var T = Math.min(p.timeout || 3000, 3000), el, sel;
+    if (p.ler !== undefined) { el = has(p.ler) ? document.querySelector(p.ler) : null; return { value: el ? textOf(el) : null }; }
+    if (p.esperarElemento) return {};
+    if (p.clicar) {
+      el = await waitFor(p.clicar, T);
+      if (!el) throw new Error("não achei: " + p.clicar);
+      el.scrollIntoView({ block: "center" });
+      await wait(p.real ? 450 : 150);
+      if (p.real) {   // toque real: devolve onde tocar (quem faz o toque é o quadro principal, via app)
+        var pt = await tapPoint(el);
+        if (pt) return { fx: pt.fx, fy: pt.fy };
+      }
+      fullClick(el);
+      return {};
+    }
+    if (p.digitar) {
+      sel = p.digitar[0];
+      el = await waitFor(sel, T);
+      if (!el) throw new Error("não achei: " + sel);
+      el.focus();
+      setValue(el, p.digitar[1]);
+      return {};
+    }
+    if (p.selecionar) {
+      sel = p.selecionar[0];
+      el = await waitFor(sel, T);
+      if (!el) throw new Error("não achei: " + sel);
+      setValue(el, p.selecionar[1]);
+      return {};
+    }
+    if (p.enter) {
+      el = await waitFor(p.enter, T);
+      if (!el) throw new Error("não achei: " + p.enter);
+      var o = { key: "Enter", code: "Enter", keyCode: 13, which: 13, bubbles: true, cancelable: true };
+      var handled = !el.dispatchEvent(new KeyboardEvent("keydown", o));
+      el.dispatchEvent(new KeyboardEvent("keypress", o));
+      el.dispatchEvent(new KeyboardEvent("keyup", o));
+      if (!handled && el.form) { try { el.form.requestSubmit ? el.form.requestSubmit() : el.form.submit(); } catch (e) {} }
+      return {};
+    }
+    if (p.extrair) {
+      var els = Array.prototype.slice.call(document.querySelectorAll(p.extrair));
+      return {
+        items: els.map(function (e) {
+          return {
+            t: textOf(e), a: FB.linkOf(e),
+            c: Array.prototype.map.call(e.querySelectorAll("td,th"), function (c) { return clean(c.innerText); })
+          };
+        })
+      };
+    }
+    if (p.rolar !== undefined) { window.scrollBy({ top: p.rolar, behavior: "smooth" }); return {}; }
+    return {};
+  }
+
+  // ---------- ferramentas (🎯 📊 ⏺) dentro do quadro ----------
+  var mode = "idle", cur = null, blockOn = false, recOn = false;
+  var EVT = ["pointerdown", "pointerup", "mousedown", "mouseup", "touchstart", "touchend", "click"];
+
+  function block(e) {
+    if (mode !== "pick" && mode !== "extract") return;
+    e.stopPropagation();
+    if (e.type === "click") { e.preventDefault(); onPick(e.target); }
+  }
+  function onPick(el) {
+    cur = el;
+    var s;
+    if (mode === "pick") {
+      s = FB.cssPath(el);
+      FB.mark([el]);
+      send({ t: "pick", mode: "pick", sel: s, n: FB.q(s), quadro: quadroKey() });
+    } else if (mode === "extract") {
+      s = FB.generalSel(el);
+      var els = Array.prototype.slice.call(document.querySelectorAll(s));
+      FB.mark(els);
+      send({
+        t: "pick", mode: "extract", sel: s, quadro: quadroKey(),
+        rows: els.map(function (e) { return [textOf(e), FB.linkOf(e)]; })
+      });
+    }
+  }
+
+  function recClick(e) {
+    if (mode === "pick" || mode === "extract") return;
+    var t = e.target;
+    if (t && t.closest) t = t.closest("a,button,input,select,textarea,label,[role=button],[onclick]") || t;
+    if (!t || t.nodeType !== 1) return;
+    send({ t: "step", step: { clicar: FB.cssPath(t), quadro: quadroKey() } });
+  }
+  function recInput(e) {
+    var t = e.target;
+    if (!t || (t.tagName !== "INPUT" && t.tagName !== "TEXTAREA")) return;
+    if (/^(checkbox|radio|file|button|submit|range|color)$/.test(t.type)) return;
+    send({ t: "step", step: { digitar: [FB.cssPath(t), t.type === "password" ? "SENHA_AQUI" : t.value], quadro: quadroKey() } });
+  }
+  function recChange(e) {
+    var t = e.target;
+    if (t && t.tagName === "SELECT") send({ t: "step", step: { selecionar: [FB.cssPath(t), t.value], quadro: quadroKey() } });
+  }
+  function setRec(on) {
+    if (on && !recOn) {
+      document.addEventListener("click", recClick, true);
+      document.addEventListener("input", recInput, true);
+      document.addEventListener("change", recChange, true);
+      recOn = true;
+    } else if (!on && recOn) {
+      document.removeEventListener("click", recClick, true);
+      document.removeEventListener("input", recInput, true);
+      document.removeEventListener("change", recChange, true);
+      recOn = false;
+    }
+  }
+  function applyState(s) {
+    var m = s.mode || "idle";
+    if (m !== mode) { FB.clearMarks(); cur = null; }
+    mode = m;
+    if ((mode === "pick" || mode === "extract") && !blockOn) {
+      EVT.forEach(function (t) { window.addEventListener(t, block, true); });
+      blockOn = true;
+    }
+    setRec(!!s.recording);
+  }
+
+  // ---------- mensagens do background ----------
+  port.onMessage.addListener(function (m) {
+    if (!m) return;
+    if (m.cmd === "find") send({ t: "found", id: m.id, ok: matches(m.quadro) && has(m.sel) });
+    else if (m.cmd === "run") {
+      runStep(m.step || {}).then(
+        function (r) { r = r || {}; r.t = "ran"; r.id = m.id; r.ok = true; send(r); },
+        function (e) { send({ t: "ran", id: m.id, ok: false, error: String((e && e.message) || e) }); }
+      );
+    }
+    else if (m.cmd === "state") applyState(m);
+    else if (m.cmd === "clear") { FB.clearMarks(); cur = null; }
+    else if (m.cmd === "up") {
+      if (cur && cur.parentElement && cur.parentElement !== document.documentElement) onPick(cur.parentElement);
+    }
+  });
 })();
