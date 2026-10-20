@@ -25,17 +25,24 @@ jobs:
           echo "FB_KEY_ALIAS=${{ secrets.FB_KEY_ALIAS }}" >> "$GITHUB_ENV"
           echo "FB_KEY_PASSWORD=${{ secrets.FB_KEY_PASSWORD }}" >> "$GITHUB_ENV"
       - name: Gerar APKs (debug e release)
-        run: gradle assembleDebug assembleRelease --no-daemon
-      # Os APKs sobem ANTES dos testes: se um teste falhar o job fica ❌, mas o APK continua disponível.
+        # --continue: se o release falhar (ex.: chave de assinatura errada), o APK debug ainda é gerado
+        run: gradle assembleDebug assembleRelease --continue --no-daemon
+      # Os APKs sobem mesmo se algo acima falhou e SEMPRE antes dos testes:
+      # se um teste falhar, o job fica ❌ mas o APK continua disponível.
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: FloatBrowser-debug
           path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: ignore
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: FloatBrowser-release
           path: app/build/outputs/apk/release/*.apk
+          if-no-files-found: ignore
       - name: Testes unitários
+        if: always()
         run: gradle testDebugUnitTest --no-daemon
       - name: Versão do GeckoView resolvida (use para fixar no gradle.properties)
         continue-on-error: true
