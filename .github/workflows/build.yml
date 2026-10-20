@@ -24,15 +24,9 @@ jobs:
           echo "FB_KEYSTORE_PASSWORD=${{ secrets.FB_KEYSTORE_PASSWORD }}" >> "$GITHUB_ENV"
           echo "FB_KEY_ALIAS=${{ secrets.FB_KEY_ALIAS }}" >> "$GITHUB_ENV"
           echo "FB_KEY_PASSWORD=${{ secrets.FB_KEY_PASSWORD }}" >> "$GITHUB_ENV"
-      - name: Testes unitários
-        run: gradle testDebugUnitTest --no-daemon
       - name: Gerar APKs (debug e release)
         run: gradle assembleDebug assembleRelease --no-daemon
-      - name: Versão do GeckoView resolvida (use para fixar no gradle.properties)
-        run: |
-          echo "### GeckoView resolvido" >> "$GITHUB_STEP_SUMMARY"
-          gradle :app:dependencies --configuration releaseRuntimeClasspath --no-daemon -q \
-            | grep -i "geckoview" | head -3 | tee -a "$GITHUB_STEP_SUMMARY"
+      # Os APKs sobem ANTES dos testes: se um teste falhar o job fica ❌, mas o APK continua disponível.
       - uses: actions/upload-artifact@v4
         with:
           name: FloatBrowser-debug
@@ -41,3 +35,11 @@ jobs:
         with:
           name: FloatBrowser-release
           path: app/build/outputs/apk/release/*.apk
+      - name: Testes unitários
+        run: gradle testDebugUnitTest --no-daemon
+      - name: Versão do GeckoView resolvida (use para fixar no gradle.properties)
+        continue-on-error: true
+        run: |
+          echo "### GeckoView resolvido" >> "$GITHUB_STEP_SUMMARY"
+          gradle :app:dependencies --configuration releaseRuntimeClasspath --no-daemon -q \
+            | grep -i "geckoview" | head -3 | tee -a "$GITHUB_STEP_SUMMARY" || true

@@ -203,6 +203,18 @@ class ProxyPool(
         null
     }
 
+    /** IP público SEM proxy (o que as janelas em IP real usam). */
+    suspend fun directIp(): String? = withContext(Dispatchers.IO) {
+        withTimeoutOrNull(6000) {
+            runCatching {
+                http.newCall(Request.Builder().url("https://api.ipify.org").build()).execute().use { r ->
+                    val ip = if (r.isSuccessful) r.body?.string()?.trim() else null
+                    if (ip != null && IP.matches(ip)) ip else null
+                }
+            }.getOrNull()
+        }
+    }
+
     @Synchronized fun release(windowId: String) { inUse.remove(windowId) }
     fun current(windowId: String) = inUse[windowId]
     fun needsRefresh() = healthy.size < 5

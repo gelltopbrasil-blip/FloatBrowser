@@ -302,7 +302,7 @@ class FloatWindow(
         key(row1, "▶") { session.goForward() }                    // avançar
         key(row1, "⟳") { session.reload() }                       // recarregar
         key(row1, "🔀") { swapProxy() }                            // trocar de proxy (novo IP)
-        key(row1, "🌐") { session.loadUri("https://api.ipify.org") } // mostrar o IP de saída desta janela
+        key(row1, "🌐") { showIp() }                              // mostrar o IP de saída desta janela (aviso, sem sair da página)
         key(row2, "🎯") { toolKey("pick") }                       // seletor: toque num elemento e veja o CSS
         key(row2, "⏺") { toolKey("rec") }                        // gravador de passos (toque de novo para parar e salvar)
         key(row2, "📊") { toolKey("extract") }                    // extrair uma lista para CSV
@@ -465,6 +465,25 @@ class FloatWindow(
                 Toast.makeText(svc, "Não há outro proxy livre agora. Mantive o atual.", Toast.LENGTH_SHORT).show()
                 if (pool.needsRefresh()) pool.refresh {}
             }
+        }
+    }
+
+    /** Botão 🌐: mostra o IP de saída desta janela num aviso, sem tirar você da página. */
+    private fun showIp() {
+        val p = pool.current(id)
+        if (!direct && p == null) {
+            Toast.makeText(svc, "Sem proxy nesta janela (bloqueada): nenhum IP em uso.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        Toast.makeText(svc, "Consultando o IP…", Toast.LENGTH_SHORT).show()
+        AppState.scope.launch {
+            val ip = if (direct || p == null) pool.directIp() else pool.test(p, 4000)?.exitIp
+            val t = when {
+                ip == null -> "Não consegui consultar o IP agora."
+                direct -> "IP real (direto): $ip"
+                else -> "IP de saída (proxy): $ip"
+            }
+            Toast.makeText(svc, t, Toast.LENGTH_LONG).show()
         }
     }
 

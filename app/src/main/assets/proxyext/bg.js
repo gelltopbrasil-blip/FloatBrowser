@@ -66,7 +66,11 @@ port.onMessage.addListener(async m => {
     toPages(m.w, stateOf(m.w));
     monState(m.w);
   } else if (m.type === "autostart") { T(m.w).autostart = true; }
-  else if (m.type === "ui") toPages(m.w, { cmd: "ui", tool: m.tool });   // teclas da janela acionam as ferramentas da página
+  else if (m.type === "ui") {   // teclas da janela acionam as ferramentas da página
+    if (pagesOf(m.w).length === 0)
+      port.postMessage({ type: "info", w: m.w, msg: "As ferramentas não estão nesta página. Recarregue (⟳) com o 🛠 ligado; páginas internas do navegador não têm ferramentas." });
+    else toPages(m.w, { cmd: "ui", tool: m.tool });
+  }
 });
 
 // ---------- páginas (porta "page" aberta por tools.js: recebe comandos das teclas da janela) ----------
