@@ -132,3 +132,14 @@ object Schedules {
         return out
     }
 }
+
+/** Vaga fixa de janela comum (1..max): cada vaga tem o seu baú de cookies, então o login sobrevive ao fechar e reabrir. */
+object Slots {
+    /** Menor vaga livre; se `want` > 0 e estiver livre, usa essa (reabrir a janela na mesma vaga). */
+    fun pick(used: Set<Int>, max: Int, want: Int = 0): Int {
+        if (want in 1..max && want !in used) return want
+        return (1..max).firstOrNull { it !in used } ?: 0
+    }
+    /** Id estável do baú de cookies da vaga. */
+    fun contextId(slot: Int) = "ctx_slot_$slot"
+}

@@ -161,7 +161,7 @@ class FloatService : Service() {
         newWindow(p.url.ifEmpty { null }, false, p)
     }
 
-    private fun newWindow(url: String? = null, min: Boolean = false, profile: Profile? = null) {
+    private fun newWindow(url: String? = null, min: Boolean = false, profile: Profile? = null, wantSlot: Int = 0) {
         if (!Settings.canDrawOverlays(this)) {
             Toast.makeText(this, "Permita a sobreposição primeiro", Toast.LENGTH_LONG).show(); return
         }
@@ -169,11 +169,15 @@ class FloatService : Service() {
             Toast.makeText(this, "Máximo de $MAX janelas", Toast.LENGTH_SHORT).show(); return
         }
         val wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+        // janela comum ocupa uma vaga fixa (1..MAX): cada vaga tem login e última página próprios
+        val slot = if (profile == null) Slots.pick(windows.map { it.slotNo }.toSet(), MAX, wantSlot) else 0
+        val startUrl = url ?: (if (slot > 0) Prefs.slotUrl(slot) else null)
         val w = FloatWindow(this, wm, "w${++counter}", windows.size,
             onClosed = { windows.remove(it); updateLocks(); notifyNow(); saveState() },
             onDecision = { win, ask -> decision(win, ask) },
-            initialUrl = url,
-            profile = profile)
+            initialUrl = startUrl,
+            profile = profile,
+            slotNo = slot)
         windows.add(w); w.show()
         if (min) w.setMinimized(true)
         windows.forEach { it.raiseBar() }
@@ -190,7 +194,7 @@ class FloatService : Service() {
         val arr = JSONArray()
         windows.forEach {
             arr.put(JSONObject().put("u", it.currentUrl() ?: JSONObject.NULL).put("m", it.isMinimized())
-                .put("p", it.profileName ?: JSONObject.NULL))
+                .put("p", it.profileName ?: JSONObject.NULL).put("s", it.slotNo))
         }
         Prefs.savedWindows = arr.toString()
     }
@@ -201,7 +205,7 @@ class FloatService : Service() {
         for (i in 0 until minOf(arr.length(), MAX)) {
             val o = arr.getJSONObject(i)
             val pn = if (o.isNull("p")) null else o.getString("p")
-            newWindow(if (o.isNull("u")) null else o.getString("u"), o.optBoolean("m"), pn?.let { ProfileStore.get(it) })
+            newWindow(if (o.isNull("u")) null else o.getString("u"), o.optBoolean("m"), pn?.let { ProfileStore.get(it) }, o.optInt("s", 0))
         }
     }
 

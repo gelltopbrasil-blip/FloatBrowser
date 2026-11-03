@@ -46,7 +46,9 @@ class FloatWindow(
     private val onClosed: (FloatWindow) -> Unit,
     private val onDecision: (FloatWindow, Boolean) -> Unit,
     private val initialUrl: String? = null,
-    val profile: Profile? = null
+    val profile: Profile? = null,
+    /** Vaga fixa (1..4) das janelas comuns; 0 = sem vaga. Define o baú de cookies. */
+    val slotNo: Int = 0
 ) {
     private val ctx = ContextThemeWrapper(svc, android.R.style.Theme_Material_Light)
     private val d = svc.resources.displayMetrics.density
@@ -107,7 +109,11 @@ class FloatWindow(
         GeckoSessionSettings.Builder()
             .userAgentMode(GeckoSessionSettings.USER_AGENT_MODE_DESKTOP)
             .viewportMode(GeckoSessionSettings.VIEWPORT_MODE_DESKTOP)
-            .contextId(if (profile != null) ProfileStore.contextId(profile.name) else "ctx_$id")
+            .contextId(when {
+                profile != null -> ProfileStore.contextId(profile.name)
+                slotNo > 0 -> Slots.contextId(slotNo)   // login fica guardado na vaga, mesmo com a janela fechada
+                else -> "ctx_$id"
+            })
             .build()
     )
     private val gv = GeckoView(ctx)
@@ -377,6 +383,7 @@ class FloatWindow(
             else -> "https://www.google.com/search?q=" + Uri.encode(t)
         }
         curUrl = u
+        if (profile == null) Prefs.setSlotUrl(slotNo, u)   // reabrir a vaga volta para esta página
         session.loadUri(u)
     }
 
@@ -395,7 +402,7 @@ class FloatWindow(
     }
 
     private fun refresh() {
-        val n = profile?.name ?: id.uppercase()
+        val n = profile?.name ?: (if (slotNo > 0) "W$slotNo" else id.uppercase())
         val p = pool.current(id)
         val warn = if (started && !mappedOk) "⚠ " else ""
         when {

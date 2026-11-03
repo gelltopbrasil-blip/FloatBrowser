@@ -35,6 +35,12 @@ Cada perfil tem seus **próprios cookies** (guardados pelo nome; não renomeie) 
 barra mostrando o nome. Um perfil só pode estar aberto uma vez. Com proxy fixo, se ele cair a janela troca
 para outro proxy da lista (nunca cai no IP real sozinha).
 
+## Login que fica salvo
+Cada janela comum ocupa uma **vaga fixa (W1 a W4)** com cookies próprios. Fechou e abriu de novo, a janela volta para a mesma
+vaga, com o mesmo login e a última página digitada nela. Janelas de **perfil** já guardavam o login pelo nome do perfil.
+Para zerar, use na tela inicial **Limpar cookies e dados de sites** (apaga o login de todas as janelas) e **Limpar cache**.
+Obs.: ao atualizar para esta versão, entre uma vez em cada janela comum; depois o login fica guardado.
+
 ## Agendamentos
 Tela inicial → **Agendamentos**: escolha um perfil e o horário (`08:30` = todo dia, `30m` ou `2h` = a cada tanto).
 Na hora, o app abre a janela do perfil (site, proxy e cookies próprios) ou, se já estiver aberta, recarrega a página.

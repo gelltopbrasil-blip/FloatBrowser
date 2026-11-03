@@ -32,6 +32,16 @@ object Prefs {
     var savedWindows: String
         get() = sp.getString("saved", "[]") ?: "[]"
         set(v) { sp.edit().putString("saved", v).apply() }
+    /** Última página de cada vaga de janela (1..4): "{"1":"https://...","2":"..."}" */
+    var slotUrlsJson: String
+        get() = sp.getString("slotUrls", "{}") ?: "{}"
+        set(v) { sp.edit().putString("slotUrls", v).apply() }
+    fun slotUrl(n: Int): String? =
+        runCatching { org.json.JSONObject(slotUrlsJson).optString(n.toString(), "") }.getOrNull()?.ifEmpty { null }
+    fun setSlotUrl(n: Int, url: String) {
+        if (n <= 0 || url.startsWith("http://floatbrowser.invalid")) return
+        runCatching { slotUrlsJson = org.json.JSONObject(slotUrlsJson).put(n.toString(), url).toString() }
+    }
     var bypassVpn: Boolean
         get() = sp.getBoolean("bypassVpn", false)
         set(v) { sp.edit().putBoolean("bypassVpn", v).apply() }
