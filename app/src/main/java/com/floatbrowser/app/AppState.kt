@@ -42,6 +42,10 @@ object Prefs {
         if (n <= 0 || url.startsWith("http://floatbrowser.invalid")) return
         runCatching { slotUrlsJson = org.json.JSONObject(slotUrlsJson).put(n.toString(), url).toString() }
     }
+    /** Máximo de janelas abertas ao mesmo tempo (1..4). Menos janelas = menos memória = menos travamentos. */
+    var maxWindows: Int
+        get() = sp.getInt("maxWin", 2)
+        set(v) { sp.edit().putInt("maxWin", v).apply() }
     var bypassVpn: Boolean
         get() = sp.getBoolean("bypassVpn", false)
         set(v) { sp.edit().putBoolean("bypassVpn", v).apply() }

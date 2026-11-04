@@ -70,6 +70,11 @@ class MainActivity : Activity() {
             Prefs.keepAwake = !Prefs.keepAwake; awakeText(); FloatService.instance?.updateLocks()
         }
         col.addView(awake)
+        val maxBtn = Button(this)
+        fun maxText() { maxBtn.text = "Máximo de janelas abertas: ${Prefs.maxWindows.coerceIn(1, 4)} (menos = menos memória, menos travamento)" }
+        maxText()
+        maxBtn.setOnClickListener { Prefs.maxWindows = Prefs.maxWindows.coerceIn(1, 4) % 4 + 1; maxText() }
+        col.addView(maxBtn)
         val dataBtn = Button(this)
         fun dataText() {
             dataBtn.text = "Uso de dados: " + listOf("NORMAL", "ECONÔMICO", "AUTOMÁTICO")[Prefs.dataMode]

@@ -165,8 +165,17 @@ class FloatService : Service() {
         if (!Settings.canDrawOverlays(this)) {
             Toast.makeText(this, "Permita a sobreposição primeiro", Toast.LENGTH_LONG).show(); return
         }
-        if (windows.size >= MAX) {
-            Toast.makeText(this, "Máximo de $MAX janelas", Toast.LENGTH_SHORT).show(); return
+        val lim = Prefs.maxWindows.coerceIn(1, MAX)
+        if (windows.size >= lim) {
+            Toast.makeText(this, "Limite de $lim janela(s). Mude na tela inicial.", Toast.LENGTH_LONG).show(); return
+        }
+        // pouca memória livre: não abre outra janela (o Android mataria o app e as janelas ficariam em branco)
+        if (windows.isNotEmpty()) {
+            val mi = ActivityManager.MemoryInfo()
+            (getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager).getMemoryInfo(mi)
+            if (mi.lowMemory || mi.availMem < 300L * 1024 * 1024) {
+                Toast.makeText(this, "Pouca memória livre no celular. Feche uma janela ou outro app.", Toast.LENGTH_LONG).show(); return
+            }
         }
         val wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         // janela comum ocupa uma vaga fixa (1..MAX): cada vaga tem login e última página próprios
@@ -202,7 +211,7 @@ class FloatService : Service() {
     private fun restoreWindows() {
         if (windows.isNotEmpty()) return
         val arr = runCatching { JSONArray(Prefs.savedWindows) }.getOrNull() ?: return
-        for (i in 0 until minOf(arr.length(), MAX)) {
+        for (i in 0 until minOf(arr.length(), Prefs.maxWindows.coerceIn(1, MAX))) {
             val o = arr.getJSONObject(i)
             val pn = if (o.isNull("p")) null else o.getString("p")
             newWindow(if (o.isNull("u")) null else o.getString("u"), o.optBoolean("m"), pn?.let { ProfileStore.get(it) }, o.optInt("s", 0))

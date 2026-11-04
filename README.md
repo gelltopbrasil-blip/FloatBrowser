@@ -41,6 +41,11 @@ vaga, com o mesmo login e a última página digitada nela. Janelas de **perfil**
 Para zerar, use na tela inicial **Limpar cookies e dados de sites** (apaga o login de todas as janelas) e **Limpar cache**.
 Obs.: ao atualizar para esta versão, entre uma vez em cada janela comum; depois o login fica guardado.
 
+## Pouca memória (janelas em branco/travadas)
+Cada janela é um navegador completo. Se o **Diagnóstico** mostrar `LOW_MEMORY`, o Android está matando o app por falta de memória.
+Use **Máximo de janelas abertas** na tela inicial (padrão 2; toque para ir de 1 a 4). Com pouca memória livre o app também
+recusa abrir outra janela e avisa, em vez de travar as que já estão abertas.
+
 ## Agendamentos
 Tela inicial → **Agendamentos**: escolha um perfil e o horário (`08:30` = todo dia, `30m` ou `2h` = a cada tanto).
 Na hora, o app abre a janela do perfil (site, proxy e cookies próprios) ou, se já estiver aberta, recarrega a página.
