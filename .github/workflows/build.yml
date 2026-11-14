@@ -4,6 +4,8 @@ on:
     branches: [ main ]
   pull_request:
   workflow_dispatch:
+permissions:
+  contents: write
 env:
   # Opcional: secrets para assinar o release (sem eles, o release usa a chave debug)
   KS_B64: ${{ secrets.FB_KEYSTORE_B64 }}
@@ -29,18 +31,19 @@ jobs:
         run: gradle assembleDebug assembleRelease --continue --no-daemon
       # Os APKs sobem mesmo se algo acima falhou e SEMPRE antes dos testes:
       # se um teste falhar, o job fica ❌ mas o APK continua disponível.
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: FloatBrowser-debug
-          path: app/build/outputs/apk/debug/*.apk
-          if-no-files-found: ignore
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: FloatBrowser-release
-          path: app/build/outputs/apk/release/*.apk
-          if-no-files-found: ignore
+      - name: Publicar no Releases
+        if: always() && github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p out
+          D=$(ls app/build/outputs/apk/debug/*.apk 2>/dev/null | head -1)
+          R=$(ls app/build/outputs/apk/release/*.apk 2>/dev/null | head -1)
+          [ -n "$D" ] && cp "$D" out/FloatBrowser-debug.apk
+          [ -n "$R" ] && cp "$R" out/FloatBrowser-release.apk
+          ls out/*.apk
+          gh release delete latest --yes --cleanup-tag --repo ${{ github.repository }} || true
+          gh release create latest out/*.apk --repo ${{ github.repository }} --target ${{ github.sha }} --title "FloatBrowser" --notes "Build ${{ github.sha }}"
       - name: Testes unitários
         if: always()
         run: gradle testDebugUnitTest --no-daemon
